@@ -5,39 +5,62 @@ from __future__ import print_function
 import collections
 import os
 import sys
+import itertools
 
 import numpy as np
 import tensorflow as tf
 
 
 def _read_words(filename):
-  with tf.gfile.GFile(filename, "r") as f:
-    return f.read().decode("utf-8").replace("\n", "<eos>").split()
+    sentence_sz = 30
+    with open(filename) as f:
+        file_content = f.readlines()
+    words2 = []
+
+    nlines = 0
+    for iline in file_content:
+        nlines += 1
+        iwords = iline.rstrip().split(" ")
+        if (len(iwords) + 2 <= sentence_sz):
+            npads = (sentence_sz - (len(iwords) + 2))
+            oline2 = ["<bos>"]
+            oline2.extend(iwords)
+            oline2.append("<eos>")
+            oline2.extend(["<pad>"]*npads)
+            words2.extend(oline2)
+    print("Read {0} lines from {1}".format(nlines, filename))
+    return words2
 
 
-def _build_vocab(filename):
+def build_vocab(filename, vocab_size):
   data = _read_words(filename)
 
   counter = collections.Counter(data)
-  count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
+
+  # to make sure the 'unk' token is always in the first position
+  count = [['<unk>', float('inf')]]
+  count.extend(counter.most_common(vocab_size - 4)) # bos+pad+unk+eos
+  count_pairs = sorted(count, key=lambda x: (-x[1], x[0]))
 
   words, _ = list(zip(*count_pairs))
   word_to_id = dict(zip(words, range(len(words))))
+  id_to_word = dict(zip(word_to_id.values(), word_to_id.keys()))
 
-  return word_to_id
+  return word_to_id, id_to_word
 
 
 def _file_to_word_ids(filename, word_to_id):
   data = _read_words(filename)
-  return [word_to_id[word] for word in data if word in word_to_id]
+  # we know it is always in the first position
+  return [word_to_id[word] if word in word_to_id else 0 for word in data]
 
 
-def read_raw_data(data_path=None):
+def read_raw_data(vocab_size, data_path=None):
 
   train_path = os.path.join(data_path, "data.train.txt")
   test_path = os.path.join(data_path, "data.test.txt")
 
-  word_to_id = _build_vocab(train_path)
+  word_to_id, id_to_word = build_vocab(train_path, vocab_size)
   train_data = _file_to_word_ids(train_path, word_to_id)
   test_data = _file_to_word_ids(test_path, word_to_id)
   vocabulary = len(word_to_id)

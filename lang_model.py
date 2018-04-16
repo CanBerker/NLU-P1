@@ -191,7 +191,7 @@ def run_epoch(session, m, data, eval_op):
     return np.exp(costs / iters)
 
 # Reads the data and separates it into training data, validation data and testing data
-raw_data = reader.read_raw_data(data_dir)
+raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, _ = raw_data
 
 #Initializes the Execution Graph and the Session
