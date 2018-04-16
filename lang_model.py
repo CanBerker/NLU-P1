@@ -23,6 +23,7 @@ parser.add_argument('--decay',         action='store', type=float, default=0.5, 
 parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
+parser.add_argument('--predefined-emb',action='store', default=False, help='Indicates if we use predefined word embeddings')
 
 args = parser.parse_args()
 init_scale    = args.init_scale
@@ -77,17 +78,33 @@ class LangModel(object):
         ###############################
         state = self._initial_state
         outputs = []
+        states = []
         with tf.variable_scope("RNN"):
           for time_step in range(num_steps):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
-            (cell_output, state) = lstm_cell(inputs[:, time_step, :], state)
+            
+            # Should be batch * embedding. Taking a timeslice in batch*time*emb.
+            d_slice = inputs[:, time_step, :] 
+            
+            # Chain cells by inserting the data slice (i.e. batch of t'th word embeddings)
+            # and the previous cell's state or zero if it's the first cell.
+            (cell_output, state) = lstm_cell(d_slice, state)
+            
+            # Keep track of output at step t, might be usefull?
             outputs.append(cell_output)
-        output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
-
+            
+            # Keep track of the cell states at timestep t, only the last one is needed.
+            states.append(state)
+                            
+        # Get the state of last cell.
+        state_f = states[-1]
+        # Get the hidden state of the last cell, we will next apply softmax weights to it.
+        hidden_state_f = state_f.h
+        
         #########################################################################
         # Creating a logistic unit to return the probability of the output word #
         #########################################################################
-        output = tf.reshape(outputs, [-1, hidden_size])
+        output = tf.reshape(hidden_state_f, [-1, hidden_size])
         softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
         softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
         logits = tf.matmul(output, softmax_w) + softmax_b
@@ -95,8 +112,9 @@ class LangModel(object):
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
         #########################################################################
-        loss = tf.contrib.legacy_seq2seq.sequence_loss_by_example([logits], [tf.reshape(self._targets, [-1])],
-                                                      [tf.ones([batch_size * num_steps])])
+        
+        # Use the cross-entropy loss for 1-hot encoded labels.
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
         self._cost = cost = tf.reduce_sum(loss) / batch_size
 
         # Store the final state
@@ -163,7 +181,7 @@ class LangModel(object):
 
 def run_epoch(session, m, data, eval_op):
 
-    #Define the epoch size based on the length of the data, batch size and the number of steps
+    #Define the epoch size based on the length of the data, batch size and the number of steps   
     epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
     start_time = time.time()
     costs = 0.0
@@ -183,7 +201,8 @@ def run_epoch(session, m, data, eval_op):
         #Add number of steps to iteration counter
         iters += m.num_steps
 
-        if step % (epoch_size // 10) == 10:
+        #Don't know what this part here is?
+        if step % 20 == 0:
             print("%.3f perplexity: %.3f speed: %.0f wps" % (step * 1.0 / epoch_size, np.exp(costs / iters),
               iters * m.batch_size / (time.time() - start_time)))
 
