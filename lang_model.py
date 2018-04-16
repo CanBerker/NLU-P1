@@ -11,8 +11,6 @@ init_scale = 0.1
 learning_rate = 1.0
 #Maximum permissible norm for the gradient (For gradient clipping -- another measure against Exploding Gradients)
 max_grad_norm = 5
-#The number of layers in our model
-num_layers = 2
 #The total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"
 num_steps = 30
 #The number of processing units (neurons) in the hidden layers
@@ -76,14 +74,17 @@ class LangModel(object):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
             (cell_output, state) = lstm_cell(inputs[:, time_step, :], state)
             outputs.append(cell_output)
+        print(outputs[0])
+        print(tf.concat(outputs,1))
+        sys.exit(1)
         output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
 
         #########################################################################
         # Creating a logistic unit to return the probability of the output word #
         #########################################################################
         output = tf.reshape(outputs, [-1, hidden_size])
-        softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[200x1000]
-        softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x1000]
+        softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
+        softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
         logits = tf.matmul(output, softmax_w) + softmax_b
 
         #########################################################################
