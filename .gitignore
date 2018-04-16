@@ -1,4 +1,5 @@
 data/wordembeddings-dim100.word2vec
 data/sentences.*
 .idea/
+*.pyc
 
