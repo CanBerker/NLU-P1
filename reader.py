@@ -6,10 +6,25 @@ import collections
 import os
 import sys
 import itertools
+import gensim
 
 import numpy as np
 import tensorflow as tf
 
+
+def load_embedding(embedding_dir):
+    print("Starting to load embeddings...")
+    
+    # Better to define as var!
+    filename = os.path.join(embedding_dir, "wordembeddings-dim100.word2vec")
+    
+    # Load at location, this is a mapping of words-->embedding of 100!
+    predef_emb = gensim.models.KeyedVectors.load_word2vec_format(filename, binary=False)
+    
+    print("Done loading the embeddings!")
+    
+    # No more computation here!
+    return predef_emb
 
 def _read_words(filename):
     sentence_sz = 30
@@ -61,10 +76,10 @@ def read_raw_data(vocab_size, data_path=None):
   test_path = os.path.join(data_path, "data.test.txt")
 
   word_to_id, id_to_word = build_vocab(train_path, vocab_size)
-  train_data = _file_to_word_ids(train_path, word_to_id)
-  test_data = _file_to_word_ids(test_path, word_to_id)
+  train_data_id = _file_to_word_ids(train_path, word_to_id)
+  test_data_id = _file_to_word_ids(test_path, word_to_id)
   vocabulary = len(word_to_id)
-  return train_data, test_data, vocabulary
+  return train_data_id, test_data_id, id_to_word, vocabulary
 
 
 def reader_iterator(raw_data, batch_size, num_steps):

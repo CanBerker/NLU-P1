@@ -23,6 +23,7 @@ parser.add_argument('--decay',         action='store', type=float, default=0.5, 
 parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
+parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
 parser.add_argument('--predefined-emb',action='store', default=False, help='Indicates if we use predefined word embeddings')
 
 args = parser.parse_args()
@@ -40,11 +41,13 @@ batch_size    = args.batch_size
 vocab_size    = args.vocab_size
 is_training   = args.is_training
 data_dir      = args.data_dir
+embedding_dir = args.embedding_dir
+predef_emb    = args.predefined_emb
 processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
 
-    def __init__(self, is_training):
+    def __init__(self, is_training, predef_emb=None):
         ######################################
         # Setting parameters for ease of use #
         ######################################
@@ -53,6 +56,7 @@ class LangModel(object):
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
+        self.predefined_embedding = predef_emb
         
         ###############################################################################
         # Creating placeholders for our input data and expected outputs (target data) #
@@ -70,7 +74,17 @@ class LangModel(object):
         # Creating the word embeddings and pointing them to the input data #
         ####################################################################
         with tf.device(processor):
-            embedding = tf.get_variable("embedding", [vocab_size, embedding_size])  
+            #
+            if self.predefined_embedding is None:                
+                # No predefined embedding so we train our own embedding.
+                # Note that in this case the embeddings are TRAINABLE VARIABLES!
+                embedding = tf.get_variable("embedding", [vocab_size, embedding_size])
+            else:
+                print("Found predefined embedding, will use this embedding.")
+                initial_weights = tf.constant(self.predefined_embedding, dtype = tf.float32)
+                embedding = tf.get_variable("embedding", initializer=initial_weights)
+                
+            # Create a lookup for the embedding matrix. Given an index get a column.
             inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         ###############################
@@ -179,6 +193,33 @@ class LangModel(object):
     def train_op(self):
         return self._train_op
 
+def process_embedding(mapping, id_to_words):
+    # Makes sure that the embedding matrix corresponds with the 
+    # ID's we computed earlier, otherwise words will map to wrong embeddings!
+    
+    # Contains all the words that are in the predef. embedding.
+    vocab_of_mapping = mapping.vocab
+
+    # Initially all zeros, we will fill in the ones we actually know.
+    embedding = np.random.uniform(-0.2, 0.2, (vocab_size, embedding_size))
+    
+    missing_words = 0
+    for item in id_to_words.items():
+        id = item[0]
+        word = item[1].strip()
+        
+        if word in vocab_of_mapping:
+            # We found a word so the row at index id should be the embedding.
+            embedding[id] = mapping[word]
+        else:
+            #Nothing found, stays random.
+            missing_words+=1
+            print("Did not find a mapping for:\""+ word+"\"")
+    
+    print("In total, %d words were not found." % missing_words)
+    
+    return embedding
+    
 def run_epoch(session, m, data, eval_op):
 
     #Define the epoch size based on the length of the data, batch size and the number of steps   
@@ -211,17 +252,32 @@ def run_epoch(session, m, data, eval_op):
 
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
-train_data, test_data, _ = raw_data
+train_data, test_data, id_to_words, voc_size = raw_data
+
+print("Actual size of vocabulary: ", voc_size)
 
 #Initializes the Execution Graph and the Session
 with tf.Graph().as_default(), tf.Session() as session:
     initializer = tf.random_uniform_initializer(-init_scale,init_scale)
     
+    if predef_emb:
+        # Obtain the word -> vec mapping from reader.
+        raw_embedding = reader.load_embedding(embedding_dir)
+        
+        # optional but unethical: also match test data in embedding matrix.
+        
+        # Process all our seen data (in ID's) to create an embedding matrix
+        # such that the rows contain the correct embedding!
+        embedding_matrix = process_embedding(raw_embedding, id_to_words)
+        
+    else:
+        embedding_matrix = None
+    
     # Instantiates the model for training
     with tf.variable_scope("model", reuse=None, initializer=initializer):
-        m = LangModel(is_training=True)
+        m = LangModel(is_training=True, predef_emb=embedding_matrix)
     with tf.variable_scope("model", reuse=True, initializer=initializer):
-        mtest = LangModel(is_training=False)
+        mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
 
     #Initialize all variables
     tf.global_variables_initializer().run()
