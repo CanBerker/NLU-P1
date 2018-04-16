@@ -2,58 +2,44 @@ import time
 import numpy as np
 import tensorflow as tf
 import os
+import sys
 import argparse
 
 import reader
 
 parser = argparse.ArgumentParser(description='Language model.')
-parser.add_argument('--init-scale', action='store', default=0.1,
-                    help='initial weight scale')
-parser.add_argument('--learning-rate', action='store', default=1.0,
-                    help='initial learning rate')
-parser.add_argument('--max-grad-norm', action='store', default=5,
-                    help='maximum permissible norm for the gradient (for gradient clipping -- another measure against exploding gradients)')
-parser.add_argument('--num-layers', action='store', default=2,
-                    help='number of layers in our model')
-parser.add_argument('--num-steps', action='store', default=30,
-                    help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
-parser.add_argument('--hidden-size', action='store', default=200,
-                    help='number of processing units (neurons) in the hidden layers')
-parser.add_argument('--max-epoch', action='store', default=4,
-                    help='maximum number of epochs trained with the initial learning rate')
-parser.add_argument('--max-max-epoch', action='store', default=13,
-                    help='total number of epochs in training')
-parser.add_argument('--keep-prob', action='store', default=1,
-                    help='probability for keeping data in the dropout layer')
-parser.add_argument('--decay', action='store', default=0.5,
-                    help='decay for the learning rate')
-parser.add_argument('--batch-size', action='store', default=64,
-                    help='size for each batch of data')
-parser.add_argument('--vocab-size', action='store', default=10000,
-                    help='size of our vocabulary')
-parser.add_argument('--is-training', action='store_true', default=False,
-                    help='flag to separate training from testing')
-parser.add_argument('--data-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'),
-                    help='directory of our dataset')
-parser.add_argument('--use_gpu', action='store_true', default=False,
-                    help='use GPU instead of CPU')
+parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
+parser.add_argument('--num-layers',    action='store', type=int, default=2, help='number of layers in our model')
+parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
+parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
+parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
+parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-max-epoch', action='store', type=int, default=13, help='total number of epochs in training')
+parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
+parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
+parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
+parser.add_argument('--learning-rate', action='store', type=float, default=1.0, help='initial learning rate')
+parser.add_argument('--decay',         action='store', type=float, default=0.5, help='decay for the learning rate')
+parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
+parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
+parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
 
 args = parser.parse_args()
-init_scale = args.init_scale
+init_scale    = args.init_scale
 learning_rate = args.learning_rate
 max_grad_norm = args.max_grad_norm
-num_layers = args.num_layers
-num_steps = args.num_steps
-hidden_size = args.hidden_size
-max_epoch = args.max_epoch
+num_layers    = args.num_layers
+num_steps     = args.num_steps
+hidden_size   = args.hidden_size
+embedding_size= args.embedding_size
+max_epoch     = args.max_epoch
 max_max_epoch = args.max_max_epoch
-keep_prob = args.keep_prob
-decay = args.decay
-batch_size = args.batch_size
-vocab_size = args.vocab_size
-is_training = args.is_training
-data_dir = args.data_dir
-processor = '/device:GPU:0' if args.use_gpu else '/cpu:0'
+decay         = args.decay
+batch_size    = args.batch_size
+vocab_size    = args.vocab_size
+is_training   = args.is_training
+data_dir      = args.data_dir
+processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
 
@@ -65,6 +51,7 @@ class LangModel(object):
         self.num_steps = num_steps
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
+        self.embedding_size = embedding_size
         
         ###############################################################################
         # Creating placeholders for our input data and expected outputs (target data) #
@@ -82,7 +69,7 @@ class LangModel(object):
         # Creating the word embeddings and pointing them to the input data #
         ####################################################################
         with tf.device(processor):
-            embedding = tf.get_variable("embedding", [vocab_size, hidden_size])  
+            embedding = tf.get_variable("embedding", [vocab_size, embedding_size])  
             inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         ###############################
@@ -95,9 +82,6 @@ class LangModel(object):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
             (cell_output, state) = lstm_cell(inputs[:, time_step, :], state)
             outputs.append(cell_output)
-        print(outputs[0])
-        print(tf.concat(outputs,1))
-        sys.exit(1)
         output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
 
         #########################################################################
