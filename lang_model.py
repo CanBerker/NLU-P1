@@ -1,40 +1,59 @@
 import time
 import numpy as np
 import tensorflow as tf
-import sys
+import os
+import argparse
 
 import reader
 
-#Initial weight scale
-init_scale = 0.1
-#Initial learning rate
-learning_rate = 1.0
-#Maximum permissible norm for the gradient (For gradient clipping -- another measure against Exploding Gradients)
-max_grad_norm = 5
-#The number of layers in our model
-num_layers = 2
-#The total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"
-num_steps = 30
-#The number of processing units (neurons) in the hidden layers
-hidden_size = 200
-#The maximum number of epochs trained with the initial learning rate
-max_epoch = 4
-#The total number of epochs in training
-max_max_epoch = 13
-#The probability for keeping data in the Dropout Layer (This is an optimization, but is outside our scope for this notebook!)
-#At 1, we ignore the Dropout Layer wrapping.
-keep_prob = 1
-#The decay for the learning rate
-decay = 0.5
-#The size for each batch of data
-#batch_size = 64
-batch_size = 1
-#The size of our vocabulary
-vocab_size = 10000
-#Training flag to separate training from testing
-is_training = 1
-#Data directory for our dataset
-data_dir= "/Users/renatomarroquin/Downloads/data"
+parser = argparse.ArgumentParser(description='Language model.')
+parser.add_argument('--init-scale', action='store', default=0.1,
+                    help='initial weight scale')
+parser.add_argument('--learning-rate', action='store', default=1.0,
+                    help='initial learning rate')
+parser.add_argument('--max-grad-norm', action='store', default=5,
+                    help='maximum permissible norm for the gradient (for gradient clipping -- another measure against exploding gradients)')
+parser.add_argument('--num-layers', action='store', default=2,
+                    help='number of layers in our model')
+parser.add_argument('--num-steps', action='store', default=30,
+                    help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
+parser.add_argument('--hidden-size', action='store', default=200,
+                    help='number of processing units (neurons) in the hidden layers')
+parser.add_argument('--max-epoch', action='store', default=4,
+                    help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-max-epoch', action='store', default=13,
+                    help='total number of epochs in training')
+parser.add_argument('--keep-prob', action='store', default=1,
+                    help='probability for keeping data in the dropout layer')
+parser.add_argument('--decay', action='store', default=0.5,
+                    help='decay for the learning rate')
+parser.add_argument('--batch-size', action='store', default=64,
+                    help='size for each batch of data')
+parser.add_argument('--vocab-size', action='store', default=10000,
+                    help='size of our vocabulary')
+parser.add_argument('--is-training', action='store_true', default=False,
+                    help='flag to separate training from testing')
+parser.add_argument('--data-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'),
+                    help='directory of our dataset')
+parser.add_argument('--use_gpu', action='store_true', default=False,
+                    help='use GPU instead of CPU')
+
+args = parser.parse_args()
+init_scale = args.init_scale
+learning_rate = args.learning_rate
+max_grad_norm = args.max_grad_norm
+num_layers = args.num_layers
+num_steps = args.num_steps
+hidden_size = args.hidden_size
+max_epoch = args.max_epoch
+max_max_epoch = args.max_max_epoch
+keep_prob = args.keep_prob
+decay = args.decay
+batch_size = args.batch_size
+vocab_size = args.vocab_size
+is_training = args.is_training
+data_dir = args.data_dir
+processor = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
 
@@ -62,7 +81,7 @@ class LangModel(object):
         ####################################################################
         # Creating the word embeddings and pointing them to the input data #
         ####################################################################
-        with tf.device("/cpu:0"):
+        with tf.device(processor):
             embedding = tf.get_variable("embedding", [vocab_size, hidden_size])  
             inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
