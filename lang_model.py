@@ -27,7 +27,8 @@ keep_prob = 1
 #The decay for the learning rate
 decay = 0.5
 #The size for each batch of data
-batch_size = 64
+#batch_size = 64
+batch_size = 1
 #The size of our vocabulary
 vocab_size = 10000
 #Training flag to separate training from testing
@@ -209,8 +210,7 @@ with tf.Graph().as_default(), tf.Session() as session:
         print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
         
         # Run the loop for this epoch in the training model
-        train_perplexity = run_epoch(session, m, train_data, m.train_op,
-                                   verbose=True)
+        train_perplexity = run_epoch(session, m, train_data, m.train_op)
         print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
     
     # Run the loop in the testing model to see how effective was our training
