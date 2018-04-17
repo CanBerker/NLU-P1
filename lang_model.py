@@ -26,6 +26,7 @@ parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.p
 parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
+parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
 
 args = parser.parse_args()
 init_scale    = args.init_scale
@@ -45,6 +46,7 @@ data_dir      = args.data_dir
 embedding_dir = args.embedding_dir
 predef_emb    = args.predefined_emb
 ckpt_dir      = args.ckpt_dir
+do_validation = args.do_validation
 processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
@@ -339,25 +341,27 @@ def evaluate_model(test_data, ckpt_dir):
         #tf.global_variables_initializer().run()
         #perp_p_s = np.power(np.array(perp_p_s),2)
 
+def get_embedding():
+    if predef_emb:
+        # Obtain the word -> vec mapping from reader.
+        raw_embedding = reader.load_embedding(embedding_dir)
+        
+        # optional but unethical: also match test data in embedding matrix.
+        
+        # Process all our seen data (in ID's) to create an embedding matrix
+        # such that the rows contain the correct embedding!
+        embedding_matrix = process_embedding(raw_embedding, id_to_words)
+            
+    else:
+        embedding_matrix = None
+    return embedding_matrix
     
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, id_to_words, voc_size = raw_data
-
-if predef_emb:
-    # Obtain the word -> vec mapping from reader.
-    raw_embedding = reader.load_embedding(embedding_dir)
-    
-    # optional but unethical: also match test data in embedding matrix.
-    
-    # Process all our seen data (in ID's) to create an embedding matrix
-    # such that the rows contain the correct embedding!
-    embedding_matrix = process_embedding(raw_embedding, id_to_words)
-        
-else:
-    embedding_matrix = None
-        
+embedding_matrix = get_embedding()
 print("Actual size of vocabulary: ", voc_size)
+
 #Initializes the Execution Graph and the Session
 with tf.Graph().as_default(), tf.Session() as session:
     initializer = tf.random_uniform_initializer(-init_scale,init_scale)
@@ -404,5 +408,9 @@ with tf.Graph().as_default(), tf.Session() as session:
     test_perplexity = run_epoch(session, mtest, test_data, tf.no_op(),True)
     print("Test Perplexity: %.3f" % test_perplexity)
   
-#perp_list = evaluate_model(test_data, "{0}/lang_model.ckpt".format(ckpt_dir))
-#print(perp_list)
+if do_validation:
+    ckpt_file = "{0}/lang_model.ckpt".format(ckpt_dir)
+    files = [f for f in os.listdir(ckpt_dir)]
+    if (len(files) > 0):
+        #perp_list = evaluate_model(test_data, ckpt_file)
+        #print(perp_list)
