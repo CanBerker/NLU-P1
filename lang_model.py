@@ -356,61 +356,66 @@ def get_embedding():
         embedding_matrix = None
     return embedding_matrix
     
+
+def do_training():
+    #Initializes the Execution Graph and the Session
+    with tf.Graph().as_default(), tf.Session() as session:
+        initializer = tf.random_uniform_initializer(-init_scale,init_scale)
+        
+        if predef_emb:
+            # Obtain the word -> vec mapping from reader.
+            raw_embedding = reader.load_embedding(embedding_dir)
+            
+            # optional but unethical: also match test data in embedding matrix.
+            
+            # Process all our seen data (in ID's) to create an embedding matrix
+            # such that the rows contain the correct embedding!
+            embedding_matrix = process_embedding(raw_embedding, id_to_words)
+            
+        else:
+            embedding_matrix = None
+        
+        # Instantiates the model for training
+        with tf.variable_scope("model", reuse=None, initializer=initializer):
+            m = LangModel(is_training=True, predef_emb=embedding_matrix)
+        with tf.variable_scope("model", reuse=True, initializer=initializer):
+            mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
+    
+        #Initialize all variables
+        tf.global_variables_initializer().run()
+        saver = tf.train.Saver()
+    
+        for i in range(max_max_epoch):
+            # Define the decay for this epoch
+            lr_decay = decay ** max(i - max_epoch, 0.0)
+            
+            # Set the decayed learning rate as the learning rate for this epoch
+            m.assign_lr(session, learning_rate * lr_decay)
+            print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
+            
+            # Run the loop for this epoch in the training model
+            train_perplexity = run_epoch(session, m, train_data, m.train_op, True)
+            print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
+        
+        print("Checkpointing")
+        saver.save(session, "{0}/lang_model.ckpt".format(ckpt_dir, i))
+        
+        # Run the loop in the testing model to see how effective was our training
+        test_perplexity = run_epoch(session, mtest, test_data, tf.no_op(),True)
+        print("Test Perplexity: %.3f" % test_perplexity)
+
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, id_to_words, voc_size = raw_data
-embedding_matrix = get_embedding()
-print("Actual size of vocabulary: ", voc_size)
-
-#Initializes the Execution Graph and the Session
-with tf.Graph().as_default(), tf.Session() as session:
-    initializer = tf.random_uniform_initializer(-init_scale,init_scale)
-    
-    if predef_emb:
-        # Obtain the word -> vec mapping from reader.
-        raw_embedding = reader.load_embedding(embedding_dir)
-        
-        # optional but unethical: also match test data in embedding matrix.
-        
-        # Process all our seen data (in ID's) to create an embedding matrix
-        # such that the rows contain the correct embedding!
-        embedding_matrix = process_embedding(raw_embedding, id_to_words)
-        
-    else:
-        embedding_matrix = None
-    
-    # Instantiates the model for training
-    with tf.variable_scope("model", reuse=None, initializer=initializer):
-        m = LangModel(is_training=True, predef_emb=embedding_matrix)
-    with tf.variable_scope("model", reuse=True, initializer=initializer):
-        mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
-
-    #Initialize all variables
-    tf.global_variables_initializer().run()
-    saver = tf.train.Saver()
-
-    for i in range(max_max_epoch):
-        # Define the decay for this epoch
-        lr_decay = decay ** max(i - max_epoch, 0.0)
-        
-        # Set the decayed learning rate as the learning rate for this epoch
-        m.assign_lr(session, learning_rate * lr_decay)
-        print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-        
-        # Run the loop for this epoch in the training model
-        train_perplexity = run_epoch(session, m, train_data, m.train_op, True)
-        print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
-    
-    print("Checkpointing")
-    saver.save(session, "{0}/lang_model.ckpt".format(ckpt_dir, i))
-    
-    # Run the loop in the testing model to see how effective was our training
-    test_perplexity = run_epoch(session, mtest, test_data, tf.no_op(),True)
-    print("Test Perplexity: %.3f" % test_perplexity)
-  
 if do_validation:
     ckpt_file = "{0}/lang_model.ckpt".format(ckpt_dir)
     files = [f for f in os.listdir(ckpt_dir)]
     if (len(files) > 0):
+        print("Starting validation")
         #perp_list = evaluate_model(test_data, ckpt_file)
         #print(perp_list)
+else:
+    embedding_matrix = get_embedding()
+    print("Actual size of vocabulary: ", voc_size)
+    print("Starting training")
+    do_training()
