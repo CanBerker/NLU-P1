@@ -276,7 +276,7 @@ def run_eval(session, m, data, op):
     # Returns the Perplexity rating for us to keep track of how the model is evolving
     return perp_list
     
-def run_epoch(session, m, data, op, is_train=False):
+def run_epoch(session, m, data, op):
 
     #Define the epoch size based on the length of the data, batch size and the number of steps   
     epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
@@ -299,7 +299,7 @@ def run_epoch(session, m, data, op, is_train=False):
         iters += m.num_steps
 
         #Don't know what this part here is?
-        if step % 20 == 0 and is_train:
+        if step % 20 == 0:
             print("%d perplexity: %.3f speed: %.0f wps" % (step, np.exp(costs / iters),
               iters * m.batch_size / (time.time() - start_time)))
             
@@ -307,24 +307,6 @@ def run_epoch(session, m, data, op, is_train=False):
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
     return np.exp(costs / iters)
-
-def evaluate_model(test_data, ckpt_dir):
-    #Initializes the Execution Graph and the Session
-    with tf.Graph().as_default(), tf.Session() as session:
-        initializer = tf.random_uniform_initializer(-init_scale,init_scale)
-
-        # Instantiates the model for training
-        saver = tf.train.Saver()
-        saver.restore(session, ckpt_dir)
-        print("---")#m.predef_emb.eval())
-        for v in tf.get_default_graph().as_graph_def().node:
-            print (v.name)
-        valid_perplexity = run_eval(session, m, test_data, m.eval_op)
-        print("Valid shape:", len(valid_perplexity))
-        return valid_perplexity
-        #Initialize all variables
-        #tf.global_variables_initializer().run()
-        #perp_p_s = np.power(np.array(perp_p_s),2)
 
 def get_embedding():
     if predef_emb:
@@ -340,7 +322,32 @@ def get_embedding():
     else:
         embedding_matrix = None
     return embedding_matrix
+
+def evaluate_model(test_data, ckpt_file, ckpt_dir):
+    #Initializes the Execution Graph and the Session
+    print(ckpt_file)
+    with tf.Graph().as_default(), tf.Session() as session:
+        saver = tf.train.import_meta_graph(ckpt_file)
+        saver.restore(session, tf.train.latest_checkpoint(ckpt_dir))
     
+        #initializer = tf.random_uniform_initializer(-init_scale,init_scale)
+
+        #embedding_matrix = get_embedding()
+        ## Instantiates the model for training
+        #with tf.variable_scope("model", reuse=None, initializer=initializer):
+        #    m = LangModel(is_training=True, predef_emb=embedding_matrix)
+        #saver = tf.train.Saver()
+        #saver.restore(session, ckpt_file)
+        #print("---")#m.predef_emb.eval())
+        ##for v in tf.get_default_graph().as_graph_def().node:
+        ##    print (v.name)
+        #valid_perplexity = run_eval(session, m, test_data, m.eval_op)
+        #print("Valid shape:", len(valid_perplexity))
+        return [] 
+        #return valid_perplexity
+
+        #tf.global_variables_initializer().run()
+        #perp_p_s = np.power(np.array(perp_p_s),2)
 
 def do_training():
     #Initializes the Execution Graph and the Session
@@ -379,26 +386,26 @@ def do_training():
             print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
             
             # Run the loop for this epoch in the training model
-            train_perplexity = run_epoch(session, m, train_data, m.train_op, True)
+            train_perplexity = run_epoch(session, m, train_data, m.train_op)
             print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
         
         print("Checkpointing")
-        saver.save(session, "{0}/lang_model.ckpt".format(ckpt_dir, i))
+        saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=max_max_epoch)
         
         # Run the loop in the testing model to see how effective was our training
-        test_perplexity = run_epoch(session, mtest, test_data, tf.no_op(),True)
+        test_perplexity = run_epoch(session, mtest, test_data, tf.no_op())
         print("Test Perplexity: %.3f" % test_perplexity)
 
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, id_to_words, voc_size = raw_data
 if do_validation:
-    ckpt_file = "{0}/lang_model.ckpt".format(ckpt_dir)
+    ckpt_file = "{0}/lang_model-{1}.meta".format(ckpt_dir, max_max_epoch)
     files = [f for f in os.listdir(ckpt_dir)]
     if (len(files) > 0):
         print("Starting validation")
         start_time = time.time()
-        #perp_list = evaluate_model(test_data, ckpt_file)
+        perp_list = evaluate_model(test_data, ckpt_file, ckpt_dir)
         end_time = time.time()
         #print(perp_list)
         print("Validation took: %.3f secs" % ((end_time-start_time)/1000))
