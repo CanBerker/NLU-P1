@@ -412,10 +412,15 @@ if do_validation:
     files = [f for f in os.listdir(ckpt_dir)]
     if (len(files) > 0):
         print("Starting validation")
+        start_time = time.time()
         #perp_list = evaluate_model(test_data, ckpt_file)
+        end_time = time.time()
         #print(perp_list)
+        print("Validation took: %.3f secs" % ((end_time-start_time)/1000))
 else:
     embedding_matrix = get_embedding()
-    print("Actual size of vocabulary: ", voc_size)
     print("Starting training")
+    start_time = time.time()
     do_training()
+    end_time = time.time()
+    print("Training took: %.3f secs" % ((end_time-start_time)/1000))
