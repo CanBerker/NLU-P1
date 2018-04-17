@@ -20,11 +20,12 @@ parser.add_argument('--vocab-size',    action='store', type=int, default=20000, 
 parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
 parser.add_argument('--learning-rate', action='store', type=float, default=1.0, help='initial learning rate')
 parser.add_argument('--decay',         action='store', type=float, default=0.5, help='decay for the learning rate')
-parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
-parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
+parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
-parser.add_argument('--predefined-emb',action='store', default=True, help='Indicates if we use predefined word embeddings')
+parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
+parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
+parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
 
 args = parser.parse_args()
 init_scale    = args.init_scale
@@ -43,6 +44,7 @@ is_training   = args.is_training
 data_dir      = args.data_dir
 embedding_dir = args.embedding_dir
 predef_emb    = args.predefined_emb
+ckpt_dir      = args.ckpt_dir
 processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
@@ -133,13 +135,14 @@ class LangModel(object):
         print("Logits after transformation:", np.array(logits_per_s).shape, " of tensors:", logits_per_s[0].get_shape())
         
         
-        []
         # Find perp
         out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
-        loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(logits_per_s, [tf.transpose(self._targets)[i] for i in range(num_steps)],
-                                                      [tf.ones([batch_size]) for i in range(num_steps)])
+        loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
+                logits_per_s, 
+                [tf.transpose(self._targets)[i] for i in range(num_steps)], 
+                [tf.ones([batch_size]) for i in range(num_steps)]
+                )
 
-                               
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
         #########################################################################
@@ -170,7 +173,8 @@ class LangModel(object):
         # Get all TensorFlow variables marked as "trainable" (i.e. all of them except _lr, which we just created)
         tvars = tf.trainable_variables()
         # Define the gradient clipping threshold
-        grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars), max_grad_norm)
+        grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), max_grad_norm)
+        #grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars), max_grad_norm)
         # Create the gradient descent optimizer with our learning rate
         optimizer = tf.train.GradientDescentOptimizer(self.lr)
         # Create the training TensorFlow Operation through our optimizer
@@ -316,6 +320,7 @@ with tf.Graph().as_default(), tf.Session() as session:
 
     #Initialize all variables
     tf.global_variables_initializer().run()
+    saver = tf.train.Saver()
 
     for i in range(max_max_epoch):
         # Define the decay for this epoch
@@ -328,6 +333,8 @@ with tf.Graph().as_default(), tf.Session() as session:
         # Run the loop for this epoch in the training model
         train_perplexity = run_epoch(session, m, train_data, m.train_op)
         print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
+        print("Checkpointing")
+        saver.save(session, "{0}/lang_model_e{1}.ckpt".format(ckpt_dir, i), global_step=i)
     
     # Run the loop in the testing model to see how effective was our training
     test_perplexity = run_epoch(session, mtest, test_data, tf.no_op())
