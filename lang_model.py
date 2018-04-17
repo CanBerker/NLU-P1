@@ -13,8 +13,8 @@ parser.add_argument('--num-layers',    action='store', type=int, default=2, help
 parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
-parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
-parser.add_argument('--max-max-epoch', action='store', type=int, default=13, help='total number of epochs in training')
+parser.add_argument('--max-epoch',     action='store', type=int, default=1, help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-max-epoch', action='store', type=int, default=2, help='total number of epochs in training')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
 parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
@@ -112,8 +112,6 @@ class LangModel(object):
             # Keep track of the cell states at timestep t, only the last one is needed.
             states.append(state)
             
-        print("Shape of outputs:", np.array(outputs).shape, " of tensors:", outputs[0].get_shape())
-                            
         # Get the state of last cell.
         state_f = states[-1]
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
@@ -131,9 +129,6 @@ class LangModel(object):
         logits_per_s = []
         for i in range(len(outputs)):
             logits_per_s.append(tf.matmul(outputs[i], softmax_w) + softmax_b)
-            
-        print("Logits after transformation:", np.array(logits_per_s).shape, " of tensors:", logits_per_s[0].get_shape())
-        
         
         # Find perp
         out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
@@ -146,20 +141,13 @@ class LangModel(object):
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
         #########################################################################
-        print("Shape of targets", self._targets.get_shape())
-        # Use the cross-entropy loss for 1-hot encoded labels.
-        #loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example([logits2], [tf.reshape(self._targets, [-1])],
-        #                                              [tf.ones([batch_size * num_steps])])
-        
-        print("Shape of loss_2:", loss_2.get_shape())
         
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
         self._cost = cost = tf.reduce_sum(loss) / batch_size
         self._cost_2 = cost_2 = loss_2
+        self._eval_op = loss_2
         # Store the final state
         self._final_state = state
-
-        print("Shape of loss:", loss.get_shape())
         
         #Everything after this point is relevant only for training
         if not is_training:
@@ -176,7 +164,7 @@ class LangModel(object):
         grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), max_grad_norm)
         #grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars), max_grad_norm)
         # Create the gradient descent optimizer with our learning rate
-        optimizer = tf.train.GradientDescentOptimizer(self.lr)
+        optimizer = tf.train.AdamOptimizer(self.lr)
         # Create the training TensorFlow Operation through our optimizer
         self._train_op = optimizer.apply_gradients(zip(grads, tvars))
 
@@ -190,6 +178,10 @@ class LangModel(object):
     @property
     def input_data(self):
         return self._input_data
+        
+    @property
+    def eval_op(self):
+        return self._eval_op
 
     # Returns the targets for this model at a point in time
     @property
@@ -247,13 +239,42 @@ def process_embedding(mapping, id_to_words):
         else:
             #Nothing found, stays random.
             missing_words+=1
-            print("Did not find a mapping for:\""+ word+"\"")
     
     print("In total, %d words were not found." % missing_words)
     
     return embedding
     
-def run_epoch(session, m, data, eval_op):
+    
+def run_eval(session, m, data, op):
+
+    perp_list = []
+
+    #Define the epoch size based on the length of the data, batch size and the number of steps   
+    batch_size = 1
+    epoch_size = ((len(data) // batch_size) - 1) // m.num_steps
+    
+    start_time = time.time()
+    costs = 0.0
+    iters = 0
+    state = session.run(m.initial_state)
+    perp_p_s = None
+    for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, batch_size, m.num_steps)):
+
+        cost, state, _ = session.run([m.cost_2, m.final_state, op],
+                                {m.input_data: x_batch,
+                                 m.targets: y_batch,
+                                 m.initial_state: state})
+        perp_list.extend(cost)
+        
+        
+        #Add number of steps to iteration counter
+        iters += m.num_steps
+        
+
+    # Returns the Perplexity rating for us to keep track of how the model is evolving
+    return perp_list
+    
+def run_epoch(session, m, data, op, is_train=False):
 
     #Define the epoch size based on the length of the data, batch size and the number of steps   
     epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
@@ -263,38 +284,80 @@ def run_epoch(session, m, data, eval_op):
     state = session.run(m.initial_state)
     perp_p_s = None
     for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, m.batch_size, m.num_steps)):
-        
+                
         #Evaluate and return cost, state by running cost, final_state and the function passed as parameter
-        cost, state, perp_p_s, _ = session.run([m.cost, m.final_state, m.cost_2, eval_op],
-                                     {m.input_data: x_batch,
-                                      m.targets: y_batch,
-                                      m.initial_state: state})
+        if is_train:
+            cost, state, _  = session.run([m.cost, m.final_state, op],
+                                    {m.input_data: x_batch,
+                                     m.targets: y_batch,
+                                     m.initial_state: state})
+            #keeps track of the total costs for this epoch
+            costs += cost
+        else:
+            cost, state, _ = session.run([m.cost_2, m.final_state, op],
+                                    {m.input_data: x_batch,
+                                     m.targets: y_batch,
+                                     m.initial_state: state})
+            costs = cost
         
-        #keeps track of the total costs for this epoch
-        costs += cost
         
         #Add number of steps to iteration counter
         iters += m.num_steps
 
         #Don't know what this part here is?
-        if step % 20 == 0:
+        if step % 20 == 0 and is_train:
             print("%d perplexity: %.3f speed: %.0f wps" % (step, np.exp(costs / iters),
               iters * m.batch_size / (time.time() - start_time)))
-            print("Perp per s dims=", np.array(perp_p_s).shape)
             
              
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
-    perp_p_s = np.power(np.array(perp_p_s),2)
-    print(perp_p_s)
-    return np.exp(costs / iters)
+    if is_train:
+        return np.exp(costs / iters)
+    else:
+        return costs
 
+def evaluate_model(test_data, ckpt_dir):
+    #Initializes the Execution Graph and the Session
+    with tf.Graph().as_default(), tf.Session() as session:
+        initializer = tf.random_uniform_initializer(-init_scale,init_scale)
+
+        # Instantiates the model for training
+        with tf.variable_scope("model", reuse=None, initializer=initializer):
+            m = LangModel(is_training=True, predef_emb=embedding_matrix)
+        with tf.variable_scope("model", reuse=True, initializer=initializer):
+            mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
+        saver = tf.train.Saver()
+        saver.restore(session, ckpt_dir)
+        print("---")#m.predef_emb.eval())
+        for v in tf.get_default_graph().as_graph_def().node:
+            print (v.name)
+        valid_perplexity = run_eval(session, m, test_data, m.eval_op)
+        print("Valid shape:", len(valid_perplexity))
+        return valid_perplexity
+        #Initialize all variables
+        #tf.global_variables_initializer().run()
+        #perp_p_s = np.power(np.array(perp_p_s),2)
+
+    
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, id_to_words, voc_size = raw_data
 
+if predef_emb:
+    # Obtain the word -> vec mapping from reader.
+    raw_embedding = reader.load_embedding(embedding_dir)
+    
+    # optional but unethical: also match test data in embedding matrix.
+    
+    # Process all our seen data (in ID's) to create an embedding matrix
+    # such that the rows contain the correct embedding!
+    embedding_matrix = process_embedding(raw_embedding, id_to_words)
+        
+else:
+    embedding_matrix = None
+        
 print("Actual size of vocabulary: ", voc_size)
-
 #Initializes the Execution Graph and the Session
 with tf.Graph().as_default(), tf.Session() as session:
     initializer = tf.random_uniform_initializer(-init_scale,init_scale)
@@ -331,11 +394,15 @@ with tf.Graph().as_default(), tf.Session() as session:
         print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
         
         # Run the loop for this epoch in the training model
-        train_perplexity = run_epoch(session, m, train_data, m.train_op)
+        train_perplexity = run_epoch(session, m, train_data, m.train_op, True)
         print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
-        print("Checkpointing")
-        saver.save(session, "{0}/lang_model_e{1}.ckpt".format(ckpt_dir, i), global_step=i)
+    
+    print("Checkpointing")
+    saver.save(session, "{0}/lang_model.ckpt".format(ckpt_dir, i))
     
     # Run the loop in the testing model to see how effective was our training
-    test_perplexity = run_epoch(session, mtest, test_data, tf.no_op())
+    test_perplexity = run_epoch(session, mtest, test_data, tf.no_op(),True)
     print("Test Perplexity: %.3f" % test_perplexity)
+  
+#perp_list = evaluate_model(test_data, "{0}/lang_model.ckpt".format(ckpt_dir))
+#print(perp_list)
