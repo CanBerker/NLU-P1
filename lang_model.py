@@ -24,7 +24,7 @@ parser.add_argument('--is-training',   action='store_true', default=False, help=
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
-parser.add_argument('--predefined-emb',action='store', default=False, help='Indicates if we use predefined word embeddings')
+parser.add_argument('--predefined-emb',action='store', default=True, help='Indicates if we use predefined word embeddings')
 
 args = parser.parse_args()
 init_scale    = args.init_scale
@@ -102,18 +102,21 @@ class LangModel(object):
             
             # Chain cells by inserting the data slice (i.e. batch of t'th word embeddings)
             # and the previous cell's state or zero if it's the first cell.
-            (cell_output, state) = lstm_cell(d_slice, state)
+            (new_h, state) = lstm_cell(d_slice, state)
             
             # Keep track of output at step t, might be usefull?
-            outputs.append(cell_output)
+            outputs.append(new_h)
             
             # Keep track of the cell states at timestep t, only the last one is needed.
             states.append(state)
+            
+        print("Shape of outputs:", np.array(outputs).shape, " of tensors:", outputs[0].get_shape())
                             
         # Get the state of last cell.
         state_f = states[-1]
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
         hidden_state_f = state_f.h
+        
         
         #########################################################################
         # Creating a logistic unit to return the probability of the output word #
@@ -122,18 +125,39 @@ class LangModel(object):
         softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
         softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
         logits = tf.matmul(output, softmax_w) + softmax_b
+        
+        logits_per_s = []
+        for i in range(len(outputs)):
+            logits_per_s.append(tf.matmul(outputs[i], softmax_w) + softmax_b)
+            
+        print("Logits after transformation:", np.array(logits_per_s).shape, " of tensors:", logits_per_s[0].get_shape())
+        
+        
+        []
+        # Find perp
+        out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
+        loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(logits_per_s, [tf.transpose(self._targets)[i] for i in range(num_steps)],
+                                                      [tf.ones([batch_size]) for i in range(num_steps)])
 
+                               
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
         #########################################################################
-        
+        print("Shape of targets", self._targets.get_shape())
         # Use the cross-entropy loss for 1-hot encoded labels.
+        #loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example([logits2], [tf.reshape(self._targets, [-1])],
+        #                                              [tf.ones([batch_size * num_steps])])
+        
+        print("Shape of loss_2:", loss_2.get_shape())
+        
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
         self._cost = cost = tf.reduce_sum(loss) / batch_size
-
+        self._cost_2 = cost_2 = loss_2
         # Store the final state
         self._final_state = state
 
+        print("Shape of loss:", loss.get_shape())
+        
         #Everything after this point is relevant only for training
         if not is_training:
             return
@@ -192,6 +216,11 @@ class LangModel(object):
     @property
     def train_op(self):
         return self._train_op
+        
+    # Returns the defined Cost
+    @property
+    def cost_2(self):
+        return self._cost_2
 
 def process_embedding(mapping, id_to_words):
     # Makes sure that the embedding matrix corresponds with the 
@@ -228,12 +257,13 @@ def run_epoch(session, m, data, eval_op):
     costs = 0.0
     iters = 0
     state = session.run(m.initial_state)
-    
-    for step, (x, y) in enumerate(reader.reader_iterator(data, m.batch_size, m.num_steps)):
+    perp_p_s = None
+    for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, m.batch_size, m.num_steps)):
+        
         #Evaluate and return cost, state by running cost, final_state and the function passed as parameter
-        cost, state, _ = session.run([m.cost, m.final_state, eval_op],
-                                     {m.input_data: x,
-                                      m.targets: y,
+        cost, state, perp_p_s, _ = session.run([m.cost, m.final_state, m.cost_2, eval_op],
+                                     {m.input_data: x_batch,
+                                      m.targets: y_batch,
                                       m.initial_state: state})
         
         #keeps track of the total costs for this epoch
@@ -244,10 +274,15 @@ def run_epoch(session, m, data, eval_op):
 
         #Don't know what this part here is?
         if step % 20 == 0:
-            print("%.3f perplexity: %.3f speed: %.0f wps" % (step * 1.0 / epoch_size, np.exp(costs / iters),
+            print("%d perplexity: %.3f speed: %.0f wps" % (step, np.exp(costs / iters),
               iters * m.batch_size / (time.time() - start_time)))
+            print("Perp per s dims=", np.array(perp_p_s).shape)
+            
+             
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
+    perp_p_s = np.power(np.array(perp_p_s),2)
+    print(perp_p_s)
     return np.exp(costs / iters)
 
 # Reads the data and separates it into training data, validation data and testing data
