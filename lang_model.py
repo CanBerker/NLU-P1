@@ -288,20 +288,12 @@ def run_epoch(session, m, data, op, is_train=False):
     for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, m.batch_size, m.num_steps)):
                 
         #Evaluate and return cost, state by running cost, final_state and the function passed as parameter
-        if is_train:
-            cost, state, _  = session.run([m.cost, m.final_state, op],
-                                    {m.input_data: x_batch,
-                                     m.targets: y_batch,
-                                     m.initial_state: state})
-            #keeps track of the total costs for this epoch
-            costs += cost
-        else:
-            cost, state, _ = session.run([m.cost_2, m.final_state, op],
-                                    {m.input_data: x_batch,
-                                     m.targets: y_batch,
-                                     m.initial_state: state})
-            costs = cost
-        
+        cost, state, _  = session.run([m.cost, m.final_state, op],
+                                {m.input_data: x_batch,
+                                 m.targets: y_batch,
+                                 m.initial_state: state})
+        #keeps track of the total costs for this epoch
+        costs += cost
         
         #Add number of steps to iteration counter
         iters += m.num_steps
@@ -314,10 +306,7 @@ def run_epoch(session, m, data, op, is_train=False):
              
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
-    if is_train:
-        return np.exp(costs / iters)
-    else:
-        return costs
+    return np.exp(costs / iters)
 
 def evaluate_model(test_data, ckpt_dir):
     #Initializes the Execution Graph and the Session
@@ -325,10 +314,6 @@ def evaluate_model(test_data, ckpt_dir):
         initializer = tf.random_uniform_initializer(-init_scale,init_scale)
 
         # Instantiates the model for training
-        with tf.variable_scope("model", reuse=None, initializer=initializer):
-            m = LangModel(is_training=True, predef_emb=embedding_matrix)
-        with tf.variable_scope("model", reuse=True, initializer=initializer):
-            mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
         saver = tf.train.Saver()
         saver.restore(session, ckpt_dir)
         print("---")#m.predef_emb.eval())
