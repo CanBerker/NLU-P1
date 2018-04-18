@@ -107,16 +107,7 @@ def reader_iterator(raw_data, batch_size, num_steps):
   for batch in batches:
     x_batch = batch[:,:num_steps-1]
     y_batch = batch[:,1:]
-    
-    count = 0
-    for x in x_batch:
-        count += 1 if x[-1] ==1 else 0
-    
-    print(count)
-    
-    print(x_batch[0])
-    print(y_batch[0])
-    
+
     yield (x_batch, y_batch)
 """
     

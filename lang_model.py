@@ -17,7 +17,7 @@ parser.add_argument('--num-layers',    action='store', type=int, default=2, help
 parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
-parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-epoch',     action='store', type=int, default=1, help='maximum number of epochs trained with the initial learning rate')
 parser.add_argument('--max-max-epoch', action='store', type=int, default=3, help='total number of epochs in training')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
@@ -108,22 +108,31 @@ class LangModel(object):
         # Create a lookup for the embedding matrix. Given an index get a column.
         embedded_inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
+        softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
+        softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
+        
         ###############################
         # Instanciating our RNN model #
         ###############################
         state = self._initial_state
         outputs = []
         states = []
+        losses = []
         with tf.variable_scope("RNN"):
           for time_step in range(self.num_steps):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
             
             # Should be batch * embedding. Taking a timeslice in batch*time*emb.
-            d_slice = embedded_inputs[:, time_step, :] 
+            d_slice = embedded_inputs[:, time_step, :]  #64*29*100 ==> 64*1*100
+            l_column= self._targets[:,time_step]        #64*29 ==> 64*1
             
             # Chain cells by inserting the data slice (i.e. batch of t'th word embeddings)
             # and the previous cell's state or zero if it's the first cell.
             (new_h, state) = lstm_cell(d_slice, state)
+            
+            loss_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
+            loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = loss_for_t)# computes cross-entopy
+            losses.append(loss_for_t)
             
             # Keep track of output at step t, might be usefull?
             outputs.append(new_h)
@@ -136,16 +145,14 @@ class LangModel(object):
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
         hidden_state_f = state_f.h
         
-        
-        
+        cross_entropies_matrix = losses #30*64*1
+
         #########################################################################
         # Creating a logistic unit to return the probability of the output word #
         #########################################################################
         #output = tf.reshape(hidden_state_f, [-1, hidden_size])
         output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
         #output = tf.reshape(outputs, [-1, hidden_size])
-        softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
-        softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
         logits = tf.matmul(output, softmax_w) + softmax_b
         
         
@@ -177,6 +184,7 @@ class LangModel(object):
         self._eval_op = loss_2
         # Store the final state
         self._final_state = state
+        self._cross_entropies_m = cross_entropies_matrix
         
         #Everything after this point is relevant only for training
         if not is_training:
@@ -246,6 +254,10 @@ class LangModel(object):
     @property
     def cost_2(self):
         return self._cost_2
+    
+    @property
+    def cross_loss_m(self):
+        return self._cross_entropies_m
 
 def process_embedding(mapping, id_to_words):
     # Makes sure that the embedding matrix corresponds with the 
@@ -326,11 +338,14 @@ def run_training_epoch(session, model, data, op, is_train=False):
         x_batch = batch[0]
         y_batch = batch[1]
         
-        cost, state, _  = session.run([model.cost, model.final_state, op],
+        cost, state, _, cross_loss  = session.run([model.cost, model.final_state, op, model.cross_loss_m],
                                     {model.input_data: x_batch,
                                      model.targets: y_batch,
                                      model.initial_state: state})
         costs += cost
+        
+        print(cross_loss)
+        print(np.sum(cross_loss))
         
         #Add number of steps to iteration counter
         iters += model.num_steps
