@@ -65,8 +65,8 @@ class LangModel(object):
         ###############################################################################
         # Creating placeholders for our input data and expected outputs (target data) #
         ###############################################################################
-        self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps]) #[64#30]
-        self._targets = tf.placeholder(tf.int32, [batch_size, num_steps]) #[64#30]
+        self._input_data = tf.placeholder(tf.int32, [None, num_steps], name="inputs") #[64#30]
+        self._targets = tf.placeholder(tf.int32, [None, num_steps], name="targets") #[64#30]
 
         ##########################################################################
         # Creating the LSTM cell structure and connect it with the RNN structure #
@@ -87,6 +87,9 @@ class LangModel(object):
                 print("Found predefined embedding, will use this embedding.")
                 initial_weights = tf.constant(self.predefined_embedding, dtype = tf.float32)
                 embedding = tf.get_variable("embedding", initializer=initial_weights)
+                print("====")
+                print(embedding.get_shape())
+                print("====")
                 
             # Create a lookup for the embedding matrix. Given an index get a column.
             inputs = tf.nn.embedding_lookup(embedding, self._input_data)
@@ -137,8 +140,8 @@ class LangModel(object):
         loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
                 logits_per_s, 
                 [tf.transpose(self._targets)[i] for i in range(num_steps)], 
-                [tf.ones([batch_size]) for i in range(num_steps)]
-                )
+                [tf.ones([batch_size]) for i in range(num_steps)],
+                name="loss_2")
 
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
@@ -252,7 +255,7 @@ def run_eval(session, m, data, op):
     perp_list = []
 
     #Define the epoch size based on the length of the data, batch size and the number of steps   
-    batch_size = 1
+    #batch_size = 1
     epoch_size = ((len(data) // batch_size) - 1) // m.num_steps
     
     start_time = time.time()
@@ -267,11 +270,8 @@ def run_eval(session, m, data, op):
                                  m.targets: y_batch,
                                  m.initial_state: state})
         perp_list.extend(cost)
-        
-        
         #Add number of steps to iteration counter
         iters += m.num_steps
-        
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
     return perp_list
@@ -302,8 +302,6 @@ def run_epoch(session, m, data, op):
         if step % 20 == 0:
             print("%d perplexity: %.3f speed: %.0f wps" % (step, np.exp(costs / iters),
               iters * m.batch_size / (time.time() - start_time)))
-            
-             
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
     return np.exp(costs / iters)
@@ -325,53 +323,76 @@ def get_embedding():
 
 def evaluate_model(test_data, ckpt_file, ckpt_dir):
     #Initializes the Execution Graph and the Session
-    print(ckpt_file)
-    with tf.Graph().as_default(), tf.Session() as session:
+    #with tf.Graph().as_default() as graph, tf.Session() as session:
+    #    saver = tf.train.import_meta_graph(ckpt_file)
+    #    saver.restore(session, tf.train.latest_checkpoint(ckpt_dir))
+    #    initializer = tf.random_uniform_initializer(-init_scale,init_scale)
+
+    #    #state = session.run(m.initial_state)
+    #    #for v in tf.get_default_graph().as_graph_def().node:
+    #    #    print (v)
+    #    x = graph.get_tensor_by_name("Train/model/inputs:0")
+    #    y = graph.get_tensor_by_name("Train/model/targets:0")
+    #    emb = graph.get_tensor_by_name("model/embedding:0")
+    #    eval_op = graph.get_operation_by_name("Train/model/loss_2")
+
+    #    print(session.run(emb))
+    with tf.Graph().as_default() as graph, tf.Session() as session:
+        initializer = tf.random_uniform_initializer(-init_scale,init_scale)
+        embedding_matrix = get_embedding()
         saver = tf.train.import_meta_graph(ckpt_file)
+        for v in tf.get_default_graph().as_graph_def().node:
+            print (v)
+
+        # Instantiates the model for training
+        with tf.name_scope("Train"):
+            with tf.variable_scope("model", reuse=None, initializer=initializer):
+                m = LangModel(is_training=True, predef_emb=embedding_matrix)
+        with tf.name_scope("Test"):
+            with tf.variable_scope("model", reuse=True, initializer=initializer):
+                mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
+
         saver.restore(session, tf.train.latest_checkpoint(ckpt_dir))
+        ini_state = graph.get_tensor_by_name("Train/model/initial_state:0")
     
-        #initializer = tf.random_uniform_initializer(-init_scale,init_scale)
-
-        #embedding_matrix = get_embedding()
-        ## Instantiates the model for training
-        #with tf.variable_scope("model", reuse=None, initializer=initializer):
-        #    m = LangModel(is_training=True, predef_emb=embedding_matrix)
-        #saver = tf.train.Saver()
-        #saver.restore(session, ckpt_file)
-        #print("---")#m.predef_emb.eval())
-        ##for v in tf.get_default_graph().as_graph_def().node:
-        ##    print (v.name)
-        #valid_perplexity = run_eval(session, m, test_data, m.eval_op)
-        #print("Valid shape:", len(valid_perplexity))
-        return [] 
-        #return valid_perplexity
-
+        #Initialize all variables
         #tf.global_variables_initializer().run()
-        #perp_p_s = np.power(np.array(perp_p_s),2)
+    
+        train_perplexity = run_eval(session, m, test_data, m.eval_op)
+        print(train_perplexity)
+        #for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(test_data, 1, num_steps)):
+        #    session.run([mtest.cost_2, mtest.final_state], { x: x_batch, y: y_batch, mtest.initial_state: state})
+
+
+       #     print(session.run(emb))
+        #    cost, state, _ = session.run([m.cost_2, m.final_state, op],
+        #                            {x: x_batch,
+        #                             y: y_batch,
+        #                             m.initial_state: state})
+        #    x = x_batch
+        #    y = y_batch
+        #    print(x.get_shape())
+        #    print(y.get_shape())
+        #batches = enumerate(reader.reader_iterator(data, 1, m.num_steps))
+        #print(len(batches))
+        #print(session.run('model/Placeholder').get_shape())
+        #print(session.run('model/Placeholder_1').get_shape())
+
+        return [] 
 
 def do_training():
     #Initializes the Execution Graph and the Session
     with tf.Graph().as_default(), tf.Session() as session:
         initializer = tf.random_uniform_initializer(-init_scale,init_scale)
-        
-        if predef_emb:
-            # Obtain the word -> vec mapping from reader.
-            raw_embedding = reader.load_embedding(embedding_dir)
-            
-            # optional but unethical: also match test data in embedding matrix.
-            
-            # Process all our seen data (in ID's) to create an embedding matrix
-            # such that the rows contain the correct embedding!
-            embedding_matrix = process_embedding(raw_embedding, id_to_words)
-            
-        else:
-            embedding_matrix = None
-        
+        embedding_matrix = get_embedding()
+
         # Instantiates the model for training
-        with tf.variable_scope("model", reuse=None, initializer=initializer):
-            m = LangModel(is_training=True, predef_emb=embedding_matrix)
-        with tf.variable_scope("model", reuse=True, initializer=initializer):
-            mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
+        with tf.name_scope("Train"):
+            with tf.variable_scope("model", reuse=None, initializer=initializer):
+                m = LangModel(is_training=True, predef_emb=embedding_matrix)
+        with tf.name_scope("Test"):
+            with tf.variable_scope("model", reuse=True, initializer=initializer):
+                mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
     
         #Initialize all variables
         tf.global_variables_initializer().run()
@@ -410,7 +431,6 @@ if do_validation:
         #print(perp_list)
         print("Validation took: %.3f secs" % ((end_time-start_time)/1000))
 else:
-    embedding_matrix = get_embedding()
     print("Starting training")
     start_time = time.time()
     do_training()
