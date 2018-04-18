@@ -62,17 +62,21 @@ class LangModel(object):
         self.embedding_size = embedding_size
         self.predefined_embedding = predef_emb
         
+        self.num_steps = self.num_steps - 1
+        
+        print(num_steps)
+        
         ###############################################################################
         # Creating placeholders for our input data and expected outputs (target data) #
         ###############################################################################
-        self._input_data = tf.placeholder(tf.int32, [None, num_steps], name="inputs") #[64#30]
-        self._targets = tf.placeholder(tf.int32, [None, num_steps], name="targets") #[64#30]
+        self._input_data = tf.placeholder(tf.int32, [None, self.num_steps], name="inputs") #[64#30]
+        self._targets = tf.placeholder(tf.int32, [None, self.num_steps], name="targets") #[64#30]
 
         ##########################################################################
         # Creating the LSTM cell structure and connect it with the RNN structure #
         ##########################################################################
         lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
-        self._initial_state = lstm_cell.zero_state(batch_size, tf.float32)
+        self._initial_state = lstm_cell.zero_state(None, tf.float32)
 
         ####################################################################
         # Creating the word embeddings and pointing them to the input data #
@@ -101,7 +105,7 @@ class LangModel(object):
         outputs = []
         states = []
         with tf.variable_scope("RNN"):
-          for time_step in range(num_steps):
+          for time_step in range(self.num_steps):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
             
             # Should be batch * embedding. Taking a timeslice in batch*time*emb.
@@ -139,8 +143,8 @@ class LangModel(object):
         out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
         loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
                 logits_per_s, 
-                [tf.transpose(self._targets)[i] for i in range(num_steps)], 
-                [tf.ones([batch_size]) for i in range(num_steps)],
+                [tf.transpose(self._targets)[i] for i in range(self.num_steps)], 
+                [tf.ones([None]) for i in range(self.num_steps)],
                 name="loss_2")
 
         #########################################################################
@@ -285,7 +289,7 @@ def run_epoch(session, m, data, op):
     iters = 0
     state = session.run(m.initial_state)
     perp_p_s = None
-    for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, m.batch_size, m.num_steps)):
+    for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, m.batch_size, num_steps)):
                 
         #Evaluate and return cost, state by running cost, final_state and the function passed as parameter
         cost, state, _  = session.run([m.cost, m.final_state, op],
