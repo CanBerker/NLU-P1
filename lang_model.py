@@ -71,28 +71,26 @@ class LangModel(object):
         ##########################################################################
         # Creating the LSTM cell structure and connect it with the RNN structure #
         ##########################################################################
-        lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
-        self._initial_state = lstm_cell.zero_state(batch_size, tf.float32)
+        with tf.device(processor):
+            lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
+            self._initial_state = lstm_cell.zero_state(batch_size, tf.float32)
 
         ####################################################################
         # Creating the word embeddings and pointing them to the input data #
         ####################################################################
-        with tf.device(processor):
-            #
             if self.predefined_embedding is None:                
                 # No predefined embedding so we train our own embedding.
                 # Note that in this case the embeddings are TRAINABLE VARIABLES!
-                embedding = tf.get_variable("embedding", [vocab_size, embedding_size])
+                with tf.variable_scope("embedding", reuse=tf.AUTO_REUSE):
+                    embedding = tf.get_variable("embedding", [vocab_size, embedding_size])
             else:
                 print("Found predefined embedding, will use this embedding.")
                 initial_weights = tf.constant(self.predefined_embedding, dtype = tf.float32)
-                embedding = tf.get_variable("embedding", initializer=initial_weights)
-                print("====")
-                print(embedding.get_shape())
-                print("====")
-                
-            # Create a lookup for the embedding matrix. Given an index get a column.
-            inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+                with tf.variable_scope("embedding", reuse=tf.AUTO_REUSE):
+                    embedding = tf.get_variable("embedding", initializer=initial_weights)
+
+        # Create a lookup for the embedding matrix. Given an index get a column.
+        inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         ###############################
         # Instanciating our RNN model #
@@ -337,23 +335,20 @@ def evaluate_model(test_data, ckpt_file, ckpt_dir):
     #    eval_op = graph.get_operation_by_name("Train/model/loss_2")
 
     #    print(session.run(emb))
-    with tf.Graph().as_default() as graph, tf.Session() as session:
-        initializer = tf.random_uniform_initializer(-init_scale,init_scale)
-        embedding_matrix = get_embedding()
+    with tf.Session() as session:
         saver = tf.train.import_meta_graph(ckpt_file)
-        for v in tf.get_default_graph().as_graph_def().node:
-            print (v)
-
-        # Instantiates the model for training
         with tf.name_scope("Train"):
-            with tf.variable_scope("model", reuse=None, initializer=initializer):
-                m = LangModel(is_training=True, predef_emb=embedding_matrix)
+            with tf.variable_scope("model", reuse=None):
+                m = LangModel(is_training=True)
         with tf.name_scope("Test"):
-            with tf.variable_scope("model", reuse=True, initializer=initializer):
-                mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
-
+            with tf.variable_scope("model", reuse=True):
+                mtest = LangModel(is_training=False)
         saver.restore(session, tf.train.latest_checkpoint(ckpt_dir))
-        ini_state = graph.get_tensor_by_name("Train/model/initial_state:0")
+        #emb = graph.get_tensor_by_name("model/embedding:0")
+        #print(session.run(emb))
+        #sys.exit(1)
+
+        #ini_state = graph.get_tensor_by_name("Train/model/initial_state:0")
     
         #Initialize all variables
         #tf.global_variables_initializer().run()
