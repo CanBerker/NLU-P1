@@ -13,8 +13,8 @@ parser.add_argument('--num-layers',    action='store', type=int, default=2, help
 parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
-parser.add_argument('--max-epoch',     action='store', type=int, default=1, help='maximum number of epochs trained with the initial learning rate')
-parser.add_argument('--max-max-epoch', action='store', type=int, default=2, help='total number of epochs in training')
+parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-max-epoch', action='store', type=int, default=3, help='total number of epochs in training')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
 parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
@@ -23,7 +23,7 @@ parser.add_argument('--decay',         action='store', type=float, default=0.5, 
 parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
-parser.add_argument('--is-training',   action='store_true', default=False, help='flag to separate training from testing')
+parser.add_argument('--is-training',   action='store_true', default=True, help='flag to separate training from testing')
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
 parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
@@ -62,9 +62,10 @@ class LangModel(object):
         self.embedding_size = embedding_size
         self.predefined_embedding = predef_emb
         
+        #Actually 29 not 30
         self.num_steps = self.num_steps - 1
         
-        print(num_steps)
+        print(self.num_steps)
         
         ###############################################################################
         # Creating placeholders for our input data and expected outputs (target data) #
@@ -72,6 +73,8 @@ class LangModel(object):
         self._input_data = tf.placeholder(tf.int32, [None, self.num_steps], name="inputs") #[64#30]
         self._targets = tf.placeholder(tf.int32, [None, self.num_steps], name="targets") #[64#30]
 
+        batch_size_t = tf.shape(self._input_data)[0]
+        
         ##########################################################################
         # Creating the LSTM cell structure and connect it with the RNN structure #
         ##########################################################################
@@ -95,7 +98,7 @@ class LangModel(object):
                     embedding = tf.get_variable("embedding", initializer=initial_weights)
 
         # Create a lookup for the embedding matrix. Given an index get a column.
-        inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+        embedded_inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         ###############################
         # Instanciating our RNN model #
@@ -108,7 +111,7 @@ class LangModel(object):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
             
             # Should be batch * embedding. Taking a timeslice in batch*time*emb.
-            d_slice = inputs[:, time_step, :] 
+            d_slice = embedded_inputs[:, time_step, :] 
             
             # Chain cells by inserting the data slice (i.e. batch of t'th word embeddings)
             # and the previous cell's state or zero if it's the first cell.
@@ -126,31 +129,41 @@ class LangModel(object):
         hidden_state_f = state_f.h
         
         
+        
         #########################################################################
         # Creating a logistic unit to return the probability of the output word #
         #########################################################################
-        output = tf.reshape(hidden_state_f, [-1, hidden_size])
+        #output = tf.reshape(hidden_state_f, [-1, hidden_size])
+        output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
+        #output = tf.reshape(outputs, [-1, hidden_size])
         softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
         softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
         logits = tf.matmul(output, softmax_w) + softmax_b
         
+        
         logits_per_s = []
         for i in range(len(outputs)):
             logits_per_s.append(tf.matmul(outputs[i], softmax_w) + softmax_b)
+        #30 * 64 * 20000
+        
+        logits_r = tf.reshape(logits_per_s, 
+                    [self.batch_size, self.num_steps,self.vocab_size])
+        
         
         # Find perp
         out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
         loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
                 logits_per_s, 
                 [tf.transpose(self._targets)[i] for i in range(self.num_steps)], 
-                [tf.ones([None]) for i in range(self.num_steps)],
+                [tf.ones([batch_size]) for i in range(self.num_steps)],
                 name="loss_2")
 
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
         #########################################################################
         
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
+        #loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
+        loss = tf.contrib.legacy_seq2seq.sequence_loss_by_example([logits], [tf.reshape(self._targets, [-1])], [tf.ones([batch_size * self.num_steps])] )
         self._cost = cost = tf.reduce_sum(loss) / batch_size
         self._cost_2 = cost_2 = loss_2
         self._eval_op = loss_2
@@ -252,7 +265,6 @@ def process_embedding(mapping, id_to_words):
     
     return embedding
     
-    
 def run_eval(session, m, data, op):
 
     perp_list = []
@@ -281,15 +293,19 @@ def run_eval(session, m, data, op):
     
 def run_epoch(session, m, data, op):
 
+    print("-------------------------------")
     #Define the epoch size based on the length of the data, batch size and the number of steps   
-    epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
+    #epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
     start_time = time.time()
     costs = 0.0
     iters = 0
     state = session.run(m.initial_state)
     perp_p_s = None
-    for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, m.batch_size, num_steps)):
-                
+    
+    batches = enumerate(reader.reader_iterator(data, batch_size, num_steps))    
+    for step, (x_batch, y_batch) in batches:
+        
+        #print("Batch size:", x_batch.shape)
         #Evaluate and return cost, state by running cost, final_state and the function passed as parameter
         cost, state, _  = session.run([m.cost, m.final_state, op],
                                 {m.input_data: x_batch,
@@ -302,12 +318,13 @@ def run_epoch(session, m, data, op):
         iters += m.num_steps
 
         #Don't know what this part here is?
-        if step % 20 == 0:
-            print("%d perplexity: %.3f speed: %.0f wps" % (step, np.exp(costs / iters),
-              iters * m.batch_size / (time.time() - start_time)))
+        if step % 1 == 0:
+            print("Batch: {0} processed\n".format(step+1) +
+                  "---------cross-entropy: {0}\n".format(cost)+
+                  "---------speed:         {0} wps\n".format(iters * m.batch_size / (time.time() - start_time)))
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
-    return np.exp(costs / iters)
+    return costs
 
 def get_embedding():
     if predef_emb:
@@ -420,6 +437,9 @@ def do_training():
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, id_to_words, voc_size = raw_data
+
+
+            
 if do_validation:
     ckpt_file = "{0}/lang_model-{1}.meta".format(ckpt_dir, max_max_epoch)
     files = [f for f in os.listdir(ckpt_dir)]
@@ -431,8 +451,9 @@ if do_validation:
         #print(perp_list)
         print("Validation took: %.3f secs" % ((end_time-start_time)/1000))
 else:
-    print("Starting training")
+    print("------------------Starting training------------------")
     start_time = time.time()
     do_training()
     end_time = time.time()
     print("Training took: %.3f secs" % ((end_time-start_time)/1000))
+    print("------------------Ending training------------------")

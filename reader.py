@@ -85,7 +85,7 @@ def read_raw_data(vocab_size, data_path=None):
 def reader_iterator(raw_data, batch_size, num_steps):
   raw_data = np.array(raw_data, dtype=np.int32)
   
-  print(num_steps)
+  #print(num_steps)
   
   n_words = int(len(raw_data))
   n_sentences = int(n_words / num_steps)
@@ -101,16 +101,25 @@ def reader_iterator(raw_data, batch_size, num_steps):
     batch.append(sentence)
     
   # Non full batches also deserve a chance
-  if len(batch) > 0:
-    batches.append(np.array(batch))
+  #if len(batch) > 0:
+  # batches.append(np.array(batch))
  
   for batch in batches:
-    print(batch.shape)
     x_batch = batch[:,:num_steps-1]
     y_batch = batch[:,1:]
+    
+    count = 0
+    for x in x_batch:
+        count += 1 if x[-1] ==1 else 0
+    
+    print(count)
+    
+    print(x_batch[0])
+    print(y_batch[0])
+    
     yield (x_batch, y_batch)
-
-    """
+"""
+    
   data_len = len(raw_data)
   batch_len = data_len // batch_size
   data = np.zeros([batch_size, batch_len], dtype=np.int32)
@@ -123,7 +132,7 @@ def reader_iterator(raw_data, batch_size, num_steps):
     raise ValueError("epoch_size == 0, decrease batch_size or num_steps")
 
   for i in range(epoch_size):
-    x = data[:, i*num_steps:(i+1)*num_steps]
+    x = data[:, i*num_steps :(i+1)*num_steps ]
     y = data[:, i*num_steps+1:(i+1)*num_steps+1]
     yield (x, y)
 """
