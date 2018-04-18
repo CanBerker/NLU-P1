@@ -7,6 +7,10 @@ import argparse
 
 import reader
 
+TRAIN = 1
+EVALUATE = 2
+BOTH = 3
+
 parser = argparse.ArgumentParser(description='Language model.')
 parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
 parser.add_argument('--num-layers',    action='store', type=int, default=2, help='number of layers in our model')
@@ -27,6 +31,8 @@ parser.add_argument('--is-training',   action='store_true', default=True, help='
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
 parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
+parser.add_argument('--action',        action='store', type=int, default=1, help='What action should be done when running?')
+parser.add_argument('--base-lr',       action='store', type=float, default=0.5, help='Learning rate')
 
 args = parser.parse_args()
 init_scale    = args.init_scale
@@ -47,6 +53,8 @@ embedding_dir = args.embedding_dir
 predef_emb    = args.predefined_emb
 ckpt_dir      = args.ckpt_dir
 do_validation = args.do_validation
+action        = args.action
+base_lr       = args.base_lr
 processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
@@ -264,7 +272,20 @@ def process_embedding(mapping, id_to_words):
     print("In total, %d words were not found." % missing_words)
     
     return embedding
+
+def evaluate(raw_data, model, session):
+
+    train_data, test_data, id_to_words, voc_size = raw_data
     
+    #Initializes the Execution Graph and the Session
+    with session as session:    
+        state = session.run(model.initial_state)
+        cost, state  = session.run([model.cost_2, model.final_state],
+                                    {model.input_data: test_data[0],
+                                     model.targets: test_data[1],
+                                     model.initial_state: state})
+        print(np.array(cost).shape)
+"""      
 def run_eval(session, m, data, op):
 
     perp_list = []
@@ -290,7 +311,39 @@ def run_eval(session, m, data, op):
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
     return perp_list
-    
+  """  
+
+def run_training_epoch(session, model, data, op, is_train=False):
+    state = session.run(model.initial_state)
+
+    costs = 0
+    iters = 0
+    start_time = time.time()
+
+    batches = reader.reader_iterator(data, batch_size, num_steps)
+    for step, batch in enumerate(batches):
+
+        x_batch = batch[0]
+        y_batch = batch[1]
+        
+        cost, state, _  = session.run([model.cost, model.final_state, op],
+                                    {model.input_data: x_batch,
+                                     model.targets: y_batch,
+                                     model.initial_state: state})
+        costs += cost
+        
+        #Add number of steps to iteration counter
+        iters += model.num_steps
+        
+        if (step+1) % 1 == 0 and is_train:
+            print("Batches done: {0} \n".format(step+1) +
+                        "---cross-entopy: {0} \n".format(costs/iters)+
+                        "---speed: {0} wps\n".format(iters * model.batch_size / (time.time() - start_time))
+                        )
+
+    return costs
+
+""" 
 def run_epoch(session, m, data, op):
 
     print("-------------------------------")
@@ -325,18 +378,12 @@ def run_epoch(session, m, data, op):
 
     # Returns the Perplexity rating for us to keep track of how the model is evolving
     return costs
+"""
 
 def get_embedding():
     if predef_emb:
-        # Obtain the word -> vec mapping from reader.
         raw_embedding = reader.load_embedding(embedding_dir)
-        
-        # optional but unethical: also match test data in embedding matrix.
-        
-        # Process all our seen data (in ID's) to create an embedding matrix
-        # such that the rows contain the correct embedding!
         embedding_matrix = process_embedding(raw_embedding, id_to_words)
-            
     else:
         embedding_matrix = None
     return embedding_matrix
@@ -397,6 +444,39 @@ def evaluate_model(test_data, ckpt_file, ckpt_dir):
 
         return [] 
 
+def train_model(raw_data):
+
+    train_data, test_data, id_to_words, voc_size = raw_data    
+    embedding_matrix = get_embedding()    
+    
+    #Initializes the Execution Graph and the Session
+    with tf.Graph().as_default(), tf.Session() as session:
+                
+        initializer = tf.contrib.layers.xavier_initializer()
+    
+        with tf.name_scope("Train"):
+            with tf.variable_scope("model", reuse=None, initializer=initializer):
+                lstm_model = LangModel(True, embedding_matrix)
+
+        #Initialize all variables
+        tf.global_variables_initializer().run()
+        saver = tf.train.Saver()
+
+        for i in range(max_epoch):
+
+            learning_rate = base_lr/(i+1)
+            lstm_model.assign_lr(session, learning_rate)
+            
+            # Run training epoch with the data.
+            train_perplexity = run_training_epoch(session,
+                        lstm_model, train_data, lstm_model.train_op, True)
+                        
+            print("Epoch %d : Train : %.3f" % (i + 1, train_perplexity))
+        
+        print("Checkpointing")
+        saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=max_max_epoch)
+        
+"""     
 def do_training():
     #Initializes the Execution Graph and the Session
     with tf.Graph().as_default(), tf.Session() as session:
@@ -438,8 +518,7 @@ def do_training():
 raw_data = reader.read_raw_data(vocab_size, data_dir)
 train_data, test_data, id_to_words, voc_size = raw_data
 
-
-            
+     
 if do_validation:
     ckpt_file = "{0}/lang_model-{1}.meta".format(ckpt_dir, max_max_epoch)
     files = [f for f in os.listdir(ckpt_dir)]
@@ -457,3 +536,31 @@ else:
     end_time = time.time()
     print("Training took: %.3f secs" % ((end_time-start_time)/1000))
     print("------------------Ending training------------------")
+"""
+
+def main():
+    # Reads the data and separates it into training data, validation data and testing data
+    raw_data = reader.read_raw_data(vocab_size, data_dir)
+    train_data, test_data, id_to_words, voc_size = raw_data
+    
+    print("Actual size of vocabulary: ", voc_size)
+    
+    if   action == TRAIN:
+        print("\n---------------Training start---------------")
+        start_time = time.time()
+        train_model(raw_data)
+        end_time = time.time()
+        print("Total time training: {0}".format(end_time - start_time))
+        print("----------------Training end----------------\n")
+    elif action == EVALUATE:
+        print("\n---------------Evaluating start---------------")
+        evaluate(raw_data, None)
+        print("----------------Evaluating end----------------\n")       
+    elif action == BOTH:
+        print("\n---------------Train/eval start---------------")
+        model, session = train_model(raw_data)
+        results = evaluate(raw_data, model, session)
+        print("----------------Train/eval end----------------\n")
+    
+if __name__ == "__main__":
+    main()
