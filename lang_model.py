@@ -12,17 +12,12 @@ EVALUATE = 2
 BOTH = 3
 
 parser = argparse.ArgumentParser(description='Language model.')
-parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
-parser.add_argument('--num-layers',    action='store', type=int, default=2, help='number of layers in our model')
 parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
 parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
-parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
-parser.add_argument('--learning-rate', action='store', type=float, default=1.0, help='initial learning rate')
-parser.add_argument('--decay',         action='store', type=float, default=0.5, help='decay for the learning rate')
 parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
@@ -31,18 +26,13 @@ parser.add_argument('--use_gpu',       action='store_true', default=False, help=
 parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
 parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
 parser.add_argument('--action',        action='store', type=int, default=3, help='What action should be done when running?')
-parser.add_argument('--base-lr',       action='store', type=float, default=0.1, help='Learning rate')
+parser.add_argument('--base-lr',       action='store', type=float, default=0.1, help='Base learning rate')
 
 args = parser.parse_args()
-init_scale    = args.init_scale
-learning_rate = args.learning_rate
-max_grad_norm = args.max_grad_norm
-num_layers    = args.num_layers
 num_steps     = args.num_steps
 hidden_size   = args.hidden_size
 embedding_size= args.embedding_size
 max_epoch     = args.max_epoch
-decay         = args.decay
 batch_size    = args.batch_size
 vocab_size    = args.vocab_size
 is_training   = args.is_training
@@ -137,7 +127,7 @@ class LangModel(object):
             # Keep track of output at step t, might be usefull?
             outputs.append(new_h)
             
-            # Keep track of the cell states at timestep t, only the last one is needed.
+            # Keep track of the cell states at timestep t, only the last one could be used
             states.append(state)
         
         #output of first
@@ -147,7 +137,6 @@ class LangModel(object):
         state_f = states[-1]
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
         hidden_state_f = state_f.h
-        
         cross_entropies_matrix = losses #30*64*1
 
         #########################################################################
@@ -156,7 +145,6 @@ class LangModel(object):
         #output = tf.reshape(hidden_state_f, [-1, hidden_size])
         with tf.variable_scope("output", reuse = tf.AUTO_REUSE):
             output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
-            #output = tf.reshape(outputs, [-1, hidden_size])
             logits = tf.matmul(output, softmax_w) + softmax_b
         
         
@@ -189,7 +177,6 @@ class LangModel(object):
             # Store the final state
             self._final_state = state
             self._cross_entropies_m = cross_entropies_matrix
-            
             self._batch_size_t = batch_size_t
         
         #Everything after this point is relevant only for training
@@ -430,7 +417,7 @@ def train_model(raw_data):
     
         with tf.name_scope("Train"):
             with tf.variable_scope("model", reuse=None, initializer=initializer):
-                lstm_model = LangModel(True, embedding_matrix)
+                lstm_model = LangModel(is_training=True, embedding_matrix)
 
         #Initialize all variables
         tf.global_variables_initializer().run()
@@ -476,11 +463,7 @@ def do_training():
         saver = tf.train.Saver()
     
         for i in range(max_max_epoch):
-            # Define the decay for this epoch
-            lr_decay = decay ** max(i - max_epoch, 0.0)
-            
-            # Set the decayed learning rate as the learning rate for this epoch
-            m.assign_lr(session, learning_rate * lr_decay)
+            m.assign_lr(session, learning_rate)
             print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
             
             # Run the loop for this epoch in the training model
@@ -539,7 +522,6 @@ def make_sentences(model, session, id_to_words):
 def main():
     # Reads the data and separates it into training data, validation data and testing data
     raw_data = reader.read_raw_data(vocab_size, data_dir)
-    train_data, val_data, test_data, word_to_id, id_to_word, voc_size = raw_data
     
     print("Actual size of vocabulary: ", voc_size)
     
