@@ -425,7 +425,7 @@ def evaluate_model(model, session, test_data):
     batches = reader.reader_iterator(test_data, batch_size, num_steps)
     losses_list = []
 
-    out_file = "testfile_results"
+    out_file = "testfile_results_{0}".format(hidden_size)
     for b, (x_batch, y_batch) in enumerate(batches):
     
         #if state == None:
