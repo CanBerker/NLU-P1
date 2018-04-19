@@ -32,6 +32,7 @@ def _read_words(filename):
         file_content = f.readlines()
     words2 = []
 
+    rejected = 0
     nlines = 0
     for iline in file_content:
         nlines += 1
@@ -43,7 +44,10 @@ def _read_words(filename):
             oline2.append("<eos>")
             oline2.extend(["<pad>"]*npads)
             words2.extend(oline2)
+        else:
+            rejected += 1
     print("Read {0} lines from {1}".format(nlines, filename))
+    print("Rejected {0} lines".format(rejected))
     return words2
 
 
@@ -101,8 +105,8 @@ def reader_iterator(raw_data, batch_size, num_steps):
     batch.append(sentence)
     
   # Non full batches also deserve a chance
-  #if len(batch) > 0:
-  # batches.append(np.array(batch))
+  if len(batch) > 0:
+   batches.append(np.array(batch))
  
   for batch in batches:
     x_batch = batch[:,:num_steps-1]

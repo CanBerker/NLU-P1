@@ -17,8 +17,7 @@ parser.add_argument('--num-layers',    action='store', type=int, default=2, help
 parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
-parser.add_argument('--max-epoch',     action='store', type=int, default=1, help='maximum number of epochs trained with the initial learning rate')
-parser.add_argument('--max-max-epoch', action='store', type=int, default=3, help='total number of epochs in training')
+parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
 parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
@@ -31,8 +30,8 @@ parser.add_argument('--is-training',   action='store_true', default=True, help='
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
 parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
-parser.add_argument('--action',        action='store', type=int, default=1, help='What action should be done when running?')
-parser.add_argument('--base-lr',       action='store', type=float, default=0.5, help='Learning rate')
+parser.add_argument('--action',        action='store', type=int, default=3, help='What action should be done when running?')
+parser.add_argument('--base-lr',       action='store', type=float, default=0.1, help='Learning rate')
 
 args = parser.parse_args()
 init_scale    = args.init_scale
@@ -43,7 +42,6 @@ num_steps     = args.num_steps
 hidden_size   = args.hidden_size
 embedding_size= args.embedding_size
 max_epoch     = args.max_epoch
-max_max_epoch = args.max_max_epoch
 decay         = args.decay
 batch_size    = args.batch_size
 vocab_size    = args.vocab_size
@@ -72,9 +70,7 @@ class LangModel(object):
         
         #Actually 29 not 30
         self.num_steps = self.num_steps - 1
-        
-        print(self.num_steps)
-        
+                
         ###############################################################################
         # Creating placeholders for our input data and expected outputs (target data) #
         ###############################################################################
@@ -88,8 +84,9 @@ class LangModel(object):
         ##########################################################################
 
         with tf.device(processor):
-            lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
-            self._initial_state = lstm_cell.zero_state(batch_size, tf.float32)
+            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE):
+                lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
+                self._initial_state = lstm_cell.zero_state(batch_size_t, tf.float32)
 
         ####################################################################
         # Creating the word embeddings and pointing them to the input data #
@@ -108,8 +105,9 @@ class LangModel(object):
         # Create a lookup for the embedding matrix. Given an index get a column.
         embedded_inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
-        softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
-        softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
+        with tf.variable_scope("softmax", reuse=tf.AUTO_REUSE):
+            softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
+            softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
         
         ###############################
         # Instanciating our RNN model #
@@ -118,7 +116,8 @@ class LangModel(object):
         outputs = []
         states = []
         losses = []
-        with tf.variable_scope("RNN"):
+        logits = []
+        with tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
           for time_step in range(self.num_steps):
             if time_step > 0: tf.get_variable_scope().reuse_variables()
             
@@ -130,16 +129,20 @@ class LangModel(object):
             # and the previous cell's state or zero if it's the first cell.
             (new_h, state) = lstm_cell(d_slice, state)
             
-            loss_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
-            loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = loss_for_t)# computes cross-entopy
+            logits_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
+            loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = logits_for_t)# computes cross-entopy
             losses.append(loss_for_t)
+            logits.append(logits_for_t)
             
             # Keep track of output at step t, might be usefull?
             outputs.append(new_h)
             
             # Keep track of the cell states at timestep t, only the last one is needed.
             states.append(state)
-            
+        
+        #output of first
+        self._distribution = logits_for_t[0]
+        
         # Get the state of last cell.
         state_f = states[-1]
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
@@ -151,40 +154,43 @@ class LangModel(object):
         # Creating a logistic unit to return the probability of the output word #
         #########################################################################
         #output = tf.reshape(hidden_state_f, [-1, hidden_size])
-        output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
-        #output = tf.reshape(outputs, [-1, hidden_size])
-        logits = tf.matmul(output, softmax_w) + softmax_b
+        with tf.variable_scope("output", reuse = tf.AUTO_REUSE):
+            output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
+            #output = tf.reshape(outputs, [-1, hidden_size])
+            logits = tf.matmul(output, softmax_w) + softmax_b
         
         
-        logits_per_s = []
-        for i in range(len(outputs)):
-            logits_per_s.append(tf.matmul(outputs[i], softmax_w) + softmax_b)
-        #30 * 64 * 20000
-        
-        logits_r = tf.reshape(logits_per_s, 
-                    [self.batch_size, self.num_steps,self.vocab_size])
-        
-        
-        # Find perp
-        out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
-        loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
-                logits_per_s, 
-                [tf.transpose(self._targets)[i] for i in range(self.num_steps)], 
-                [tf.ones([batch_size]) for i in range(self.num_steps)],
-                name="loss_2")
+            logits_per_s = []
+            for i in range(len(outputs)):
+                logits_per_s.append(tf.matmul(outputs[i], softmax_w) + softmax_b)
+            #30 * 64 * 20000
+            
+            logits_r = tf.reshape(logits_per_s, 
+                        [batch_size_t, self.num_steps,self.vocab_size])
+            
+            
+            # Find perp
+            out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
+            loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
+                    logits_per_s, 
+                    [tf.transpose(self._targets)[i] for i in range(self.num_steps)], 
+                    [tf.ones([batch_size_t]) for i in range(self.num_steps)],
+                    name="loss_2")
 
         #########################################################################
         # Defining the loss and cost functions for the model's learning to work #
         #########################################################################
         
-        #loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
-        loss = tf.contrib.legacy_seq2seq.sequence_loss_by_example([logits], [tf.reshape(self._targets, [-1])], [tf.ones([batch_size * self.num_steps])] )
-        self._cost = cost = tf.reduce_sum(loss) / batch_size
-        self._cost_2 = cost_2 = loss_2
-        self._eval_op = loss_2
-        # Store the final state
-        self._final_state = state
-        self._cross_entropies_m = cross_entropies_matrix
+            #loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self._targets[:,-1], logits=logits )
+            loss = tf.contrib.legacy_seq2seq.sequence_loss_by_example([logits], [tf.reshape(self._targets, [-1])], [tf.ones([batch_size_t * self.num_steps])] )
+            self._cost = cost = tf.reduce_sum(loss) / tf.cast(batch_size_t, tf.float32)
+            self._cost_2 = cost_2 = loss_2
+            self._eval_op = loss_2
+            # Store the final state
+            self._final_state = state
+            self._cross_entropies_m = cross_entropies_matrix
+            
+            self._batch_size_t = batch_size_t
         
         #Everything after this point is relevant only for training
         if not is_training:
@@ -258,6 +264,14 @@ class LangModel(object):
     @property
     def cross_loss_m(self):
         return self._cross_entropies_m
+        
+    @property
+    def distribution(self):
+        return self._distribution
+    
+    @property
+    def batch_size_t(self):
+        return self._batch_size_t
 
 def process_embedding(mapping, id_to_words):
     # Makes sure that the embedding matrix corresponds with the 
@@ -326,33 +340,35 @@ def run_eval(session, m, data, op):
   """  
 
 def run_training_epoch(session, model, data, op, is_train=False):
-    state = session.run(model.initial_state)
 
+    state = None
     costs = 0
     iters = 0
     start_time = time.time()
 
     batches = reader.reader_iterator(data, batch_size, num_steps)
     for step, batch in enumerate(batches):
-
+    
         x_batch = batch[0]
         y_batch = batch[1]
         
-        cost, state, _, cross_loss  = session.run([model.cost, model.final_state, op, model.cross_loss_m],
+        #if state == None:
+        state = session.run(model.initial_state,{model.input_data:x_batch})
+        
+        cost, state, _, cross_loss, bs = session.run([model.cost, model.final_state, op, model.cross_loss_m, model.batch_size_t],
                                     {model.input_data: x_batch,
                                      model.targets: y_batch,
                                      model.initial_state: state})
         costs += cost
         
-        print(cross_loss)
-        print(np.sum(cross_loss))
+        print(bs)
         
         #Add number of steps to iteration counter
         iters += model.num_steps
         
         if (step+1) % 1 == 0 and is_train:
             print("Batches done: {0} \n".format(step+1) +
-                        "---cross-entopy: {0} \n".format(costs/iters)+
+                        "---cross-entopy: {0} \n".format(costs/(iters*model.batch_size))+
                         "---speed: {0} wps\n".format(iters * model.batch_size / (time.time() - start_time))
                         )
 
@@ -395,7 +411,7 @@ def run_epoch(session, m, data, op):
     return costs
 """
 
-def get_embedding():
+def get_embedding(id_to_words):
     if predef_emb:
         raw_embedding = reader.load_embedding(embedding_dir)
         embedding_matrix = process_embedding(raw_embedding, id_to_words)
@@ -403,7 +419,25 @@ def get_embedding():
         embedding_matrix = None
     return embedding_matrix
 
-def evaluate_model(test_data, ckpt_file, ckpt_dir):
+def evaluate_model(model, session, test_data):
+
+    state = None
+    batches = reader.reader_iterator(test_data, batch_size, num_steps)
+    losses_list = []
+    
+    for b, (x_batch, y_batch) in enumerate(batches):
+    
+        #if state == None:
+        state = session.run(model.initial_state,{model.input_data:x_batch})
+        
+        cost, state = session.run([model.cost_2, model.final_state],
+                                    {model.input_data: x_batch,
+                                     model.targets: y_batch,
+                                     model.initial_state: state})
+        print(np.power(2, cost))#List of size batch
+       
+        
+def evaluate_model_from_file(test_data, ckpt_file, ckpt_dir):
     #Initializes the Execution Graph and the Session
     #with tf.Graph().as_default() as graph, tf.Session() as session:
     #    saver = tf.train.import_meta_graph(ckpt_file)
@@ -419,25 +453,20 @@ def evaluate_model(test_data, ckpt_file, ckpt_dir):
     #    eval_op = graph.get_operation_by_name("Train/model/loss_2")
 
     #    print(session.run(emb))
+    
+    tf.reset_default_graph()
     with tf.Session() as session:
-        saver = tf.train.import_meta_graph(ckpt_file)
-        with tf.name_scope("Train"):
-            with tf.variable_scope("model", reuse=None):
-                m = LangModel(is_training=True)
-        with tf.name_scope("Test"):
-            with tf.variable_scope("model", reuse=True):
-                mtest = LangModel(is_training=False)
-        saver.restore(session, tf.train.latest_checkpoint(ckpt_dir))
-        #emb = graph.get_tensor_by_name("model/embedding:0")
-        #print(session.run(emb))
-        #sys.exit(1)
-
+        #get m
+        model = LangModel(is_training=False)
+        saver = tf.train.Saver()
+        saver.restore(session, "ckpt/lang_model-512")
+        
         #ini_state = graph.get_tensor_by_name("Train/model/initial_state:0")
     
         #Initialize all variables
         #tf.global_variables_initializer().run()
     
-        train_perplexity = run_eval(session, m, test_data, m.eval_op)
+        train_perplexity = evaluate_model( model, session, test_data)
         print(train_perplexity)
         #for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(test_data, 1, num_steps)):
         #    session.run([mtest.cost_2, mtest.final_state], { x: x_batch, y: y_batch, mtest.initial_state: state})
@@ -462,7 +491,7 @@ def evaluate_model(test_data, ckpt_file, ckpt_dir):
 def train_model(raw_data):
 
     train_data, test_data, id_to_words, voc_size = raw_data    
-    embedding_matrix = get_embedding()    
+    embedding_matrix = get_embedding( id_to_words)    
     
     #Initializes the Execution Graph and the Session
     with tf.Graph().as_default(), tf.Session() as session:
@@ -487,9 +516,13 @@ def train_model(raw_data):
                         lstm_model, train_data, lstm_model.train_op, True)
                         
             print("Epoch %d : Train : %.3f" % (i + 1, train_perplexity))
-        
+            
+            
         print("Checkpointing")
-        saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=max_max_epoch)
+        saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=hidden_size)
+        
+        evaluate_model(lstm_model, session, test_data)
+        #make_sentences(lstm_model,session, id_to_words)
         
 """     
 def do_training():
@@ -553,6 +586,24 @@ else:
     print("------------------Ending training------------------")
 """
 
+def make_sentences(model, session, id_to_words):
+    input_word = [[0]*29]
+    input_word[0][0] = 0
+    state = session.run(model.initial_state, {model._input_data:input_word})
+    for i in range(5):
+    
+        distr  = session.run([model.distribution],
+                                        {model.input_data: input_word,
+                                         model.targets: [[0]*29],
+                                         model.initial_state: state})
+        
+        distr = distr[0][4:]
+        print(distr)
+        ind = np.argmax(np.array(distr))
+        print(id_to_words[ind])
+        
+        input_word[0][0] = ind
+        
 def main():
     # Reads the data and separates it into training data, validation data and testing data
     raw_data = reader.read_raw_data(vocab_size, data_dir)
@@ -564,17 +615,17 @@ def main():
         print("\n---------------Training start---------------")
         start_time = time.time()
         train_model(raw_data)
+        #make_sentences(model, id_to_words)
         end_time = time.time()
         print("Total time training: {0}".format(end_time - start_time))
         print("----------------Training end----------------\n")
     elif action == EVALUATE:
         print("\n---------------Evaluating start---------------")
-        evaluate(raw_data, None)
+        evaluate_model_from_file(test_data, "{0}/lang_model-{1}.meta".format(ckpt_dir, hidden_size), ckpt_dir)
         print("----------------Evaluating end----------------\n")       
     elif action == BOTH:
         print("\n---------------Train/eval start---------------")
-        model, session = train_model(raw_data)
-        results = evaluate(raw_data, model, session)
+        train_model(raw_data)
         print("----------------Train/eval end----------------\n")
     
 if __name__ == "__main__":
