@@ -424,7 +424,8 @@ def evaluate_model(model, session, test_data):
     state = None
     batches = reader.reader_iterator(test_data, batch_size, num_steps)
     losses_list = []
-    
+
+    out_file = "testfile_results"
     for b, (x_batch, y_batch) in enumerate(batches):
     
         #if state == None:
@@ -435,8 +436,10 @@ def evaluate_model(model, session, test_data):
                                      model.targets: y_batch,
                                      model.initial_state: state})
         
-        print(np.power(2, cost))#List of size batch
-       
+        losses_list.extend(np.power(2, cost))#List of size batch
+    with open(out_file) as of:
+        for e in losses_list:
+            of.write("{0}\n".format(e)) 
         
 def evaluate_model_from_file(test_data, ckpt_file, ckpt_dir):
     #Initializes the Execution Graph and the Session
