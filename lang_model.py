@@ -311,33 +311,6 @@ def evaluate(raw_data, model, session):
                                      model.targets: test_data[1],
                                      model.initial_state: state})
         print(np.array(cost).shape)
-"""      
-def run_eval(session, m, data, op):
-
-    perp_list = []
-
-    #Define the epoch size based on the length of the data, batch size and the number of steps   
-    #batch_size = 1
-    epoch_size = ((len(data) // batch_size) - 1) // m.num_steps
-    
-    start_time = time.time()
-    costs = 0.0
-    iters = 0
-    state = session.run(m.initial_state)
-    perp_p_s = None
-    for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(data, batch_size, m.num_steps)):
-
-        cost, state, _ = session.run([m.cost_2, m.final_state, op],
-                                {m.input_data: x_batch,
-                                 m.targets: y_batch,
-                                 m.initial_state: state})
-        perp_list.extend(cost)
-        #Add number of steps to iteration counter
-        iters += m.num_steps
-
-    # Returns the Perplexity rating for us to keep track of how the model is evolving
-    return perp_list
-  """  
 
 def run_training_epoch(session, model, data, op, is_train=False):
 
@@ -374,43 +347,6 @@ def run_training_epoch(session, model, data, op, is_train=False):
 
     return costs
 
-""" 
-def run_epoch(session, m, data, op):
-
-    print("-------------------------------")
-    #Define the epoch size based on the length of the data, batch size and the number of steps   
-    #epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
-    start_time = time.time()
-    costs = 0.0
-    iters = 0
-    state = session.run(m.initial_state)
-    perp_p_s = None
-    
-    batches = enumerate(reader.reader_iterator(data, batch_size, num_steps))    
-    for step, (x_batch, y_batch) in batches:
-        
-        #print("Batch size:", x_batch.shape)
-        #Evaluate and return cost, state by running cost, final_state and the function passed as parameter
-        cost, state, _  = session.run([m.cost, m.final_state, op],
-                                {m.input_data: x_batch,
-                                 m.targets: y_batch,
-                                 m.initial_state: state})
-        #keeps track of the total costs for this epoch
-        costs += cost
-        
-        #Add number of steps to iteration counter
-        iters += m.num_steps
-
-        #Don't know what this part here is?
-        if step % 1 == 0:
-            print("Batch: {0} processed\n".format(step+1) +
-                  "---------cross-entropy: {0}\n".format(cost)+
-                  "---------speed:         {0} wps\n".format(iters * m.batch_size / (time.time() - start_time)))
-
-    # Returns the Perplexity rating for us to keep track of how the model is evolving
-    return costs
-"""
-
 def get_embedding(id_to_words):
     if predef_emb:
         raw_embedding = reader.load_embedding(embedding_dir)
@@ -425,7 +361,11 @@ def evaluate_model(model, session, test_data):
     batches = reader.reader_iterator(test_data, batch_size, num_steps)
     losses_list = []
 
-    out_file = "testfile_results"
+    out_dir = "output_{0}".format(hidden_size)
+    if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+    out_file = "{1}/testfile_results_{0}".format(hidden_size, out_dir)
+
     for b, (x_batch, y_batch) in enumerate(batches):
     
         #if state == None:
@@ -437,7 +377,7 @@ def evaluate_model(model, session, test_data):
                                      model.initial_state: state})
         
         losses_list.extend(np.power(2, cost))#List of size batch
-    with open(out_file) as of:
+    with open(out_file, 'w') as of:
         for e in losses_list:
             of.write("{0}\n".format(e)) 
         
