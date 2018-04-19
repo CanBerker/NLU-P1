@@ -77,7 +77,7 @@ def _file_to_word_ids(filename, word_to_id):
 def read_raw_data(vocab_size, data_path=None):
 
   train_path = os.path.join(data_path, "data.train.txt")
-  test_path = os.path.join(data_path, "data.test.txt")
+  test_path = os.path.join(data_path, "sentences_test.new")
 
   word_to_id, id_to_word = build_vocab(train_path, vocab_size)
   train_data_id = _file_to_word_ids(train_path, word_to_id)

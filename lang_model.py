@@ -434,6 +434,7 @@ def evaluate_model(model, session, test_data):
                                     {model.input_data: x_batch,
                                      model.targets: y_batch,
                                      model.initial_state: state})
+        
         print(np.power(2, cost))#List of size batch
        
         
