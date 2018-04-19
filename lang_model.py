@@ -80,7 +80,7 @@ class LangModel(object):
 
         with tf.device(processor):
             with tf.variable_scope("cell", reuse=tf.AUTO_REUSE):
-                lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
+                lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_hidden_size, forget_bias=0.0, state_is_tuple=True)
                 self._initial_state = lstm_cell.zero_state(batch_size_t, tf.float32)
 
         ####################################################################
@@ -124,10 +124,12 @@ class LangModel(object):
             # and the previous cell's state or zero if it's the first cell.
             (new_h, state) = lstm_cell(d_slice, state)
             
-            #if exp_c:
-            #    # downscaling
-            #    new_h =  tf.reshape(new_h, [-1, hidden_size])
+            if exp_c:
+                # downscaling
+                new_h =  tf.reshape(new_h, [-1, hidden_size])
+            print("new_h",new_h.get_shape())
             logits_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
+            print("logits_for_t", logits_for_t.get_shape())
             loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = logits_for_t)# computes cross-entopy
             losses.append(loss_for_t)
             logits.append(logits_for_t)
@@ -152,10 +154,10 @@ class LangModel(object):
         #########################################################################
         #output = tf.reshape(hidden_state_f, [-1, hidden_size])
         with tf.variable_scope("output", reuse = tf.AUTO_REUSE):
-            output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
-            #if exp_c:
-            #    # downscaling
-            #    output = tf.reshape(output, [-1, hidden_size])
+            output = tf.reshape(tf.concat(outputs, 1), [-1, lstm_hidden_size])
+            if exp_c:
+                # downscaling
+                output = tf.reshape(output, [-1, hidden_size])
             logits = tf.matmul(output, softmax_w) + softmax_b
         
         
@@ -168,7 +170,7 @@ class LangModel(object):
                         [batch_size_t, self.num_steps,self.vocab_size])
             
             # Find perp
-            out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
+            #out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
             loss_2 = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
                     logits_per_s, 
                     [tf.transpose(self._targets)[i] for i in range(self.num_steps)], 
