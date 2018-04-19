@@ -355,16 +355,22 @@ def get_embedding(id_to_words):
         embedding_matrix = None
     return embedding_matrix
 
+def write_values_to_file(values, dirname, filename):
+    out_dir = "{0}_{1}".format(dirname, hidden_size)
+    if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+    out_file = "{0}/{1}_{2}".format(out_dir, filename, hidden_size)
+
+    with open(out_file, 'w') as of:
+        for e in values:
+            of.write("{0}\n".format(e)) 
+
 def evaluate_model(model, session, test_data):
 
     state = None
     batches = reader.reader_iterator(test_data, batch_size, num_steps)
     losses_list = []
 
-    out_dir = "output_{0}".format(hidden_size)
-    if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-    out_file = "{1}/testfile_results_{0}".format(hidden_size, out_dir)
 
     for b, (x_batch, y_batch) in enumerate(batches):
     
@@ -377,9 +383,7 @@ def evaluate_model(model, session, test_data):
                                      model.initial_state: state})
         
         losses_list.extend(np.power(2, cost))#List of size batch
-    with open(out_file, 'w') as of:
-        for e in losses_list:
-            of.write("{0}\n".format(e)) 
+    return losses_list
         
 def evaluate_model_from_file(test_data, ckpt_file, ckpt_dir):
     #Initializes the Execution Graph and the Session
@@ -412,30 +416,12 @@ def evaluate_model_from_file(test_data, ckpt_file, ckpt_dir):
     
         train_perplexity = evaluate_model( model, session, test_data)
         print(train_perplexity)
-        #for step, (x_batch, y_batch) in enumerate(reader.reader_iterator(test_data, 1, num_steps)):
-        #    session.run([mtest.cost_2, mtest.final_state], { x: x_batch, y: y_batch, mtest.initial_state: state})
-
-
-       #     print(session.run(emb))
-        #    cost, state, _ = session.run([m.cost_2, m.final_state, op],
-        #                            {x: x_batch,
-        #                             y: y_batch,
-        #                             m.initial_state: state})
-        #    x = x_batch
-        #    y = y_batch
-        #    print(x.get_shape())
-        #    print(y.get_shape())
-        #batches = enumerate(reader.reader_iterator(data, 1, m.num_steps))
-        #print(len(batches))
-        #print(session.run('model/Placeholder').get_shape())
-        #print(session.run('model/Placeholder_1').get_shape())
-
         return [] 
 
 def train_model(raw_data):
 
-    train_data, test_data, id_to_words, voc_size = raw_data    
-    embedding_matrix = get_embedding( id_to_words)    
+    train_data, val_data, test_data, word_to_id, id_to_word, voc_size = raw_data
+    embedding_matrix = get_embedding(id_to_word)
     
     #Initializes the Execution Graph and the Session
     with tf.Graph().as_default(), tf.Session() as session:
@@ -456,16 +442,18 @@ def train_model(raw_data):
             lstm_model.assign_lr(session, learning_rate)
             
             # Run training epoch with the data.
-            train_perplexity = run_training_epoch(session,
-                        lstm_model, train_data, lstm_model.train_op, True)
-                        
+            train_perplexity = run_training_epoch(session, lstm_model, train_data, lstm_model.train_op, True)
             print("Epoch %d : Train : %.3f" % (i + 1, train_perplexity))
+
+            #if epoch % 10 == 0:
+            #    evaluate_model(lstm_model, session, val_data)
             
             
         print("Checkpointing")
         saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=hidden_size)
         
-        evaluate_model(lstm_model, session, test_data)
+        losses_list = evaluate_model(lstm_model, session, test_data)
+        write_values_to_file(losses_list, "validation_output", "validation_results")
         #make_sentences(lstm_model,session, id_to_words)
         
 """     
@@ -508,7 +496,7 @@ def do_training():
 
 # Reads the data and separates it into training data, validation data and testing data
 raw_data = reader.read_raw_data(vocab_size, data_dir)
-train_data, test_data, id_to_words, voc_size = raw_data
+train_data, val_data, test_data, word_to_id, id_to_word, voc_size = raw_data
 
      
 if do_validation:
@@ -551,7 +539,7 @@ def make_sentences(model, session, id_to_words):
 def main():
     # Reads the data and separates it into training data, validation data and testing data
     raw_data = reader.read_raw_data(vocab_size, data_dir)
-    train_data, test_data, id_to_words, voc_size = raw_data
+    train_data, val_data, test_data, word_to_id, id_to_word, voc_size = raw_data
     
     print("Actual size of vocabulary: ", voc_size)
     

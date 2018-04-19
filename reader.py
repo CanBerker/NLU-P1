@@ -76,14 +76,16 @@ def _file_to_word_ids(filename, word_to_id):
 
 def read_raw_data(vocab_size, data_path=None):
 
-  train_path = os.path.join(data_path, "data.train.txt")
-  test_path = os.path.join(data_path, "sentences_test.new")
+  train_path = os.path.join(data_path, "sentences.train")
+  val_path = os.path.join(data_path, "sentences.val")
+  test_path = os.path.join(data_path, "sentences.test")
 
   word_to_id, id_to_word = build_vocab(train_path, vocab_size)
   train_data_id = _file_to_word_ids(train_path, word_to_id)
+  val_data_id = _file_to_word_ids(val_path, word_to_id)
   test_data_id = _file_to_word_ids(test_path, word_to_id)
-  vocabulary = len(word_to_id)
-  return train_data_id, test_data_id, id_to_word, vocabulary
+  vocab_size = len(word_to_id)
+  return train_data_id, val_data_id, test_data_id, word_to_id, id_to_word, vocab_size
 
 
 def reader_iterator(raw_data, batch_size, num_steps):
