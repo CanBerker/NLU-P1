@@ -12,17 +12,13 @@ EVALUATE = 2
 BOTH = 3
 
 parser = argparse.ArgumentParser(description='Language model.')
-parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
-parser.add_argument('--num-layers',    action='store', type=int, default=2, help='number of layers in our model')
 parser.add_argument('--num-steps',     action='store', type=int, default=30, help='total number of recurrence steps, also known as the number of layers when our RNN is "unfolded"')
+parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
 parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
-parser.add_argument('--init-scale',    action='store', type=float, default=0.1, help='initial weight scale')
-parser.add_argument('--learning-rate', action='store', type=float, default=1.0, help='initial learning rate')
-parser.add_argument('--decay',         action='store', type=float, default=0.5, help='decay for the learning rate')
 parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
@@ -30,19 +26,16 @@ parser.add_argument('--is-training',   action='store_true', default=True, help='
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
 parser.add_argument('--predefined-emb',action='store_true', default=False, help='Indicates if we use predefined word embeddings')
 parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
+parser.add_argument('--exp_c',         action='store_true', default=False, help='Run experiment C')
 parser.add_argument('--action',        action='store', type=int, default=3, help='What action should be done when running?')
-parser.add_argument('--base-lr',       action='store', type=float, default=0.1, help='Learning rate')
+parser.add_argument('--base-lr',       action='store', type=float, default=0.1, help='Base learning rate')
 
 args = parser.parse_args()
-init_scale    = args.init_scale
-learning_rate = args.learning_rate
-max_grad_norm = args.max_grad_norm
-num_layers    = args.num_layers
 num_steps     = args.num_steps
 hidden_size   = args.hidden_size
 embedding_size= args.embedding_size
 max_epoch     = args.max_epoch
-decay         = args.decay
+max_grad_norm = args.max_grad_norm
 batch_size    = args.batch_size
 vocab_size    = args.vocab_size
 is_training   = args.is_training
@@ -53,6 +46,7 @@ ckpt_dir      = args.ckpt_dir
 do_validation = args.do_validation
 action        = args.action
 base_lr       = args.base_lr
+exp_c         = args.exp_c
 processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
@@ -64,6 +58,7 @@ class LangModel(object):
         self.batch_size = batch_size
         self.num_steps = num_steps
         self.hidden_size = hidden_size
+        lstm_hidden_size = hidden_size if not exp_c else 1024
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.predefined_embedding = predef_emb
@@ -129,6 +124,9 @@ class LangModel(object):
             # and the previous cell's state or zero if it's the first cell.
             (new_h, state) = lstm_cell(d_slice, state)
             
+            #if exp_c:
+            #    # downscaling
+            #    new_h =  tf.reshape(new_h, [-1, hidden_size])
             logits_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
             loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = logits_for_t)# computes cross-entopy
             losses.append(loss_for_t)
@@ -137,7 +135,7 @@ class LangModel(object):
             # Keep track of output at step t, might be usefull?
             outputs.append(new_h)
             
-            # Keep track of the cell states at timestep t, only the last one is needed.
+            # Keep track of the cell states at timestep t, only the last one could be used
             states.append(state)
         
         #output of first
@@ -147,7 +145,6 @@ class LangModel(object):
         state_f = states[-1]
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
         hidden_state_f = state_f.h
-        
         cross_entropies_matrix = losses #30*64*1
 
         #########################################################################
@@ -156,18 +153,19 @@ class LangModel(object):
         #output = tf.reshape(hidden_state_f, [-1, hidden_size])
         with tf.variable_scope("output", reuse = tf.AUTO_REUSE):
             output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
-            #output = tf.reshape(outputs, [-1, hidden_size])
+            #if exp_c:
+            #    # downscaling
+            #    output = tf.reshape(output, [-1, hidden_size])
             logits = tf.matmul(output, softmax_w) + softmax_b
         
         
+            #30 * 64 * 20000
             logits_per_s = []
             for i in range(len(outputs)):
                 logits_per_s.append(tf.matmul(outputs[i], softmax_w) + softmax_b)
-            #30 * 64 * 20000
             
             logits_r = tf.reshape(logits_per_s, 
                         [batch_size_t, self.num_steps,self.vocab_size])
-            
             
             # Find perp
             out_final = tf.reshape(hidden_state_f, [-1, hidden_size])
@@ -189,7 +187,6 @@ class LangModel(object):
             # Store the final state
             self._final_state = state
             self._cross_entropies_m = cross_entropies_matrix
-            
             self._batch_size_t = batch_size_t
         
         #Everything after this point is relevant only for training
@@ -221,7 +218,7 @@ class LangModel(object):
     @property
     def input_data(self):
         return self._input_data
-        
+
     @property
     def eval_op(self):
         return self._eval_op
@@ -430,7 +427,7 @@ def train_model(raw_data):
     
         with tf.name_scope("Train"):
             with tf.variable_scope("model", reuse=None, initializer=initializer):
-                lstm_model = LangModel(True, embedding_matrix)
+                lstm_model = LangModel(is_training=True, predef_emb=embedding_matrix)
 
         #Initialize all variables
         tf.global_variables_initializer().run()
@@ -476,11 +473,7 @@ def do_training():
         saver = tf.train.Saver()
     
         for i in range(max_max_epoch):
-            # Define the decay for this epoch
-            lr_decay = decay ** max(i - max_epoch, 0.0)
-            
-            # Set the decayed learning rate as the learning rate for this epoch
-            m.assign_lr(session, learning_rate * lr_decay)
+            m.assign_lr(session, learning_rate)
             print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
             
             # Run the loop for this epoch in the training model
