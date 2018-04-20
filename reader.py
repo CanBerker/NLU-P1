@@ -12,6 +12,16 @@ import numpy as np
 import tensorflow as tf
 
 
+def load_incomplete_set(incompl_dir):
+    
+    file = os.path.join(incompl_dir, "sentences.continuation")
+    with open(file) as f:
+        sentences = f.readlines()
+        
+    sentences = [x.split(" ") for x in sentences]
+    
+    return sentences
+    
 def load_embedding(embedding_dir):
     print("Starting to load embeddings...")
     
@@ -76,8 +86,8 @@ def _file_to_word_ids(filename, word_to_id):
 
 def read_raw_data(vocab_size, data_path=None):
 
-  train_path = os.path.join(data_path, "sentences.train")
-  val_path = os.path.join(data_path, "sentences.val")
+  train_path = os.path.join(data_path, "data.train.txt")
+  val_path = os.path.join(data_path, "sentences.eval")
   test_path = os.path.join(data_path, "sentences.test")
 
   word_to_id, id_to_word = build_vocab(train_path, vocab_size)
