@@ -79,7 +79,7 @@ class LangModel(object):
         ##########################################################################
 
         with tf.device(processor):
-            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE):
+            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE, initializer=tf.contrib.layers.xavier_initializer()):
                 lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_hidden_size, forget_bias=0.0, state_is_tuple=True)
                 self._initial_state = lstm_cell.zero_state(batch_size_t, tf.float32)
 
