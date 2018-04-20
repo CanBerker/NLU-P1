@@ -84,7 +84,7 @@ class LangModel(object):
         ##########################################################################
 
         with tf.device(processor):
-            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE):
+            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE, initializer=tf.contrib.layers.xavier_initializer()):
                 lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
                 self._initial_state = lstm_cell.zero_state(batch_size_t, tf.float32)
 
@@ -106,8 +106,8 @@ class LangModel(object):
         embedded_inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         with tf.variable_scope("softmax", reuse=tf.AUTO_REUSE):
-            softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
-            softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
+            softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512x20000]
+            softmax_b = tf.get_variable("softmax_b", [vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[1x20000]
         
         ###############################
         # Instanciating our RNN model #
@@ -557,7 +557,10 @@ def main():
         print("----------------Evaluating end----------------\n")       
     elif action == BOTH:
         print("\n---------------Train/eval start---------------")
+        start_time = time.time()
         train_model(raw_data)
+        end_time = time.time()
+        print("Total time training: {0}".format(end_time - start_time))
         print("----------------Train/eval end----------------\n")
     
 if __name__ == "__main__":
