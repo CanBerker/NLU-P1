@@ -103,8 +103,8 @@ class LangModel(object):
         with tf.variable_scope("softmax", reuse=tf.AUTO_REUSE):
             softmax_b = tf.get_variable("softmax_b", [vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[1x20000]
             if exp_c:
-                softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer())
-                softmax_wp = tf.get_variable("softmax_wp", [lstm_hidden_size, hidden_size], initializer=tf.contrib.layers.xavier_initializer())
+                softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512 * 20 000]
+                softmax_wp = tf.get_variable("softmax_wp", [lstm_hidden_size, hidden_size], initializer=tf.contrib.layers.xavier_initializer()) #[1024 * 512]
             else:
                 softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512x20000]
 
@@ -456,9 +456,9 @@ def train_model(raw_data):
         print("Checkpointing")
         saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=hidden_size)
         
-        losses_list = evaluate_model(lstm_model, session, test_data)
-        write_values_to_file(losses_list, "validation_output", "validation_results")
-        #make_sentences(lstm_model,session, id_to_words)
+        #losses_list = evaluate_model(lstm_model, session, test_data)
+        #write_values_to_file(losses_list, "validation_output", "validation_results")
+        make_sentences(lstm_model,session, id_to_words)
         
 """     
 def do_training():
@@ -520,7 +520,7 @@ else:
 
 def make_sentences(model, session, id_to_words):
     input_word = [[0]*29]
-    input_word[0][0] = 0
+    input_word[0][0] = 1
     state = session.run(model.initial_state, {model._input_data:input_word})
     for i in range(5):
     
