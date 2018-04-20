@@ -79,8 +79,8 @@ class LangModel(object):
         ##########################################################################
 
         with tf.device(processor):
-            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE):
-                lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_hidden_size, forget_bias=0.0, state_is_tuple=True)
+            with tf.variable_scope("cell", reuse=tf.AUTO_REUSE, initializer=tf.contrib.layers.xavier_initializer()):
+                lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=0.0, state_is_tuple=True)
                 self._initial_state = lstm_cell.zero_state(batch_size_t, tf.float32)
 
         ####################################################################
@@ -557,7 +557,10 @@ def main():
         print("----------------Evaluating end----------------\n")       
     elif action == BOTH:
         print("\n---------------Train/eval start---------------")
+        start_time = time.time()
         train_model(raw_data)
+        end_time = time.time()
+        print("Total time training: {0}".format(end_time - start_time))
         print("----------------Train/eval end----------------\n")
     
 if __name__ == "__main__":
