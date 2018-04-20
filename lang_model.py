@@ -16,11 +16,11 @@ parser.add_argument('--num-steps',     action='store', type=int, default=30, hel
 parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
-parser.add_argument('--max-epoch',     action='store', type=int, default=40, help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-epoch',     action='store', type=int, default=1, help='maximum number of epochs trained with the initial learning rate')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
 parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
-parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
+parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data_small'), help='directory of our dataset')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
 parser.add_argument('--is-training',   action='store_true', default=True, help='flag to separate training from testing')
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
@@ -539,10 +539,10 @@ else:
     print("------------------Ending training------------------")
 """
 
-def word_map(word, word_to_id):
-    id = word_to_id["<unk>"]
+def dict_map(word, mapping_dict, default):
+    id = default
     try:
-        id = word_to_id[word]
+        id = mapping_dict[word]
     except:
         print("word could not be mapped:", word)
         pass
@@ -551,11 +551,15 @@ def word_map(word, word_to_id):
 def complete_sentences(model, session, id_to_words):
 
     words_to_id = dict(zip(id_to_words.values(), id_to_words.keys()))
+    
+    unk_id = words_to_id["<unk>"]
 
     incomplete_sentences = reader.load_incomplete_set(data_dir) #[inclomple $ None]
-    incomplete_sentences = [[word_map(x, words_to_id) for x in y] for y in incomplete_sentences]
+    incomplete_sentences = [[dict_map(x, words_to_id, unk_id) for x in y] for y in incomplete_sentences]
     complete_sentences = [complete(model, session, x, words_to_id, id_to_words) for x in incomplete_sentences]
-    
+    complete_sentences = [[dict_map(x, id_to_words, id_to_words[unk_id]) for x in y] for y in complete_sentences]
+    complete_sentences_string = [" ".join(x) for x in complete_sentences]
+    write_values_to_file(complete_sentences_string, "compl", "completed_sentences")
     
 def complete(model, session, incomplete_sentence, words_to_id, id_to_words):
     
@@ -568,7 +572,6 @@ def complete(model, session, incomplete_sentence, words_to_id, id_to_words):
         if i < len(incomplete_sentence):
             input_word[0][0] = incomplete_sentence[i]
     
-        print("word to consider:", id_to_words[input_word[0][0]])
         distr, state= session.run([model.distribution, model._first_state],
                                         {model.input_data: input_word,
                                          model.targets: [[0]*29],
@@ -583,7 +586,7 @@ def complete(model, session, incomplete_sentence, words_to_id, id_to_words):
             break
         
         input_word[0][0] = most_probable_word
-        
+    incomplete_sentence.extend(next_words)
     return incomplete_sentence
         
 def main():
