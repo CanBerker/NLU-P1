@@ -16,7 +16,7 @@ parser.add_argument('--num-steps',     action='store', type=int, default=30, hel
 parser.add_argument('--max-grad-norm', action='store', type=int, default=5, help='maximum permissible norm for gradient clipping')
 parser.add_argument('--hidden-size',   action='store', type=int, default=512, help='number of processing units (neurons) in the hidden layers')
 parser.add_argument('--embedding-size',action='store', type=int, default=100, help='word embedding size')
-parser.add_argument('--max-epoch',     action='store', type=int, default=5, help='maximum number of epochs trained with the initial learning rate')
+parser.add_argument('--max-epoch',     action='store', type=int, default=40, help='maximum number of epochs trained with the initial learning rate')
 parser.add_argument('--batch-size',    action='store', type=int, default=64, help='size for each batch of data')
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
 parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
@@ -28,7 +28,7 @@ parser.add_argument('--predefined-emb',action='store_true', default=False, help=
 parser.add_argument('--do_validation', action='store_true', default=False, help='Run validation over test set')
 parser.add_argument('--exp_c',         action='store_true', default=False, help='Run experiment C')
 parser.add_argument('--action',        action='store', type=int, default=3, help='What action should be done when running?')
-parser.add_argument('--base-lr',       action='store', type=float, default=0.1, help='Base learning rate')
+parser.add_argument('--base-lr',       action='store', type=float, default=2, help='Base learning rate')
 
 args = parser.parse_args()
 num_steps     = args.num_steps
@@ -131,9 +131,9 @@ class LangModel(object):
             if exp_c:
                 # downscaling
                 new_h =  tf.matmul(new_h, softmax_wp)
-            print("new_h",new_h.get_shape())
+            #print("new_h",new_h.get_shape())
             logits_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
-            print("logits_for_t", logits_for_t.get_shape())
+            #print("logits_for_t", logits_for_t.get_shape())
 
             loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = logits_for_t)# computes cross-entopy
             losses.append(loss_for_t)
@@ -145,9 +145,10 @@ class LangModel(object):
             # Keep track of the cell states at timestep t, only the last one could be used
             states.append(state)
         
+        self._first_state = states[0]
         #output of first
         self._distribution = logits_for_t[0]
-        
+        self._logits = logits
         # Get the state of last cell.
         state_f = states[-1]
         # Get the hidden state of the last cell, we will next apply softmax weights to it.
@@ -276,6 +277,10 @@ class LangModel(object):
     @property
     def batch_size_t(self):
         return self._batch_size_t
+        
+    @property
+    def first_state(self):
+        return self._first_state
 
 def process_embedding(mapping, id_to_words):
     # Makes sure that the embedding matrix corresponds with the 
@@ -316,7 +321,7 @@ def evaluate(raw_data, model, session):
                                      model.initial_state: state})
         print(np.array(cost).shape)
 
-def run_training_epoch(session, model, data, op, is_train=False):
+def run_training_epoch(session, model, data, op, is_train=False, id_to_word = None):
 
     state = None
     costs = 0
@@ -332,11 +337,27 @@ def run_training_epoch(session, model, data, op, is_train=False):
         #if state == None:
         state = session.run(model.initial_state,{model.input_data:x_batch})
         
-        cost, state, _, cross_loss, bs = session.run([model.cost, model.final_state, op, model.cross_loss_m, model.batch_size_t],
+        cost, state, _, cross_loss, bs, logs= session.run([model.cost, model.final_state, op, model.cross_loss_m, model.batch_size_t, model._logits],
                                     {model.input_data: x_batch,
                                      model.targets: y_batch,
                                      model.initial_state: state})
         costs += cost
+        
+        logs = np.array(logs)
+        pred = np.reshape(np.argmax(logs, axis =2), (bs, num_steps-1))
+        for y in range(len(pred)):
+            pre_s = ""
+            act_s = ""
+            
+            for x in range(len(pred[y])):
+                try:
+                    pre_s += " " + id_to_word[pred[y][x]]
+                    act_s += " " + id_to_word[y_batch[y][x]]
+                except:
+                    pass
+            print("predicted: ", pre_s)
+            print("Actual:", act_s)
+        
         
         print(bs)
         
@@ -446,7 +467,7 @@ def train_model(raw_data):
             lstm_model.assign_lr(session, learning_rate)
             
             # Run training epoch with the data.
-            train_perplexity = run_training_epoch(session, lstm_model, train_data, lstm_model.train_op, True)
+            train_perplexity = run_training_epoch(session, lstm_model, train_data, lstm_model.train_op, True, id_to_word)
             print("Epoch %d : Train : %.3f" % (i + 1, train_perplexity))
 
             #if epoch % 10 == 0:
@@ -458,7 +479,7 @@ def train_model(raw_data):
         
         #losses_list = evaluate_model(lstm_model, session, test_data)
         #write_values_to_file(losses_list, "validation_output", "validation_results")
-        make_sentences(lstm_model,session, id_to_words)
+        complete_sentences(lstm_model,session, id_to_word)
         
 """     
 def do_training():
@@ -518,23 +539,52 @@ else:
     print("------------------Ending training------------------")
 """
 
-def make_sentences(model, session, id_to_words):
-    input_word = [[0]*29]
-    input_word[0][0] = 1
-    state = session.run(model.initial_state, {model._input_data:input_word})
-    for i in range(5):
+def word_map(word, word_to_id):
+    id = word_to_id["<unk>"]
+    try:
+        id = word_to_id[word]
+    except:
+        print("word could not be mapped:", word)
+        pass
+    return id
+        
+def complete_sentences(model, session, id_to_words):
+
+    words_to_id = dict(zip(id_to_words.values(), id_to_words.keys()))
+
+    incomplete_sentences = reader.load_incomplete_set(data_dir) #[inclomple $ None]
+    incomplete_sentences = [[word_map(x, words_to_id) for x in y] for y in incomplete_sentences]
+    complete_sentences = [complete(model, session, x, words_to_id, id_to_words) for x in incomplete_sentences]
     
-        distr  = session.run([model.distribution],
+    
+def complete(model, session, incomplete_sentence, words_to_id, id_to_words):
+    
+    next_words = []
+    max_completion_length = 20
+    input_word = [[0]*(num_steps-1)]
+    state = session.run(model.initial_state, {model._input_data:input_word})
+    for i in range(max_completion_length):
+    
+        if i < len(incomplete_sentence):
+            input_word[0][0] = incomplete_sentence[i]
+    
+        print("word to consider:", id_to_words[input_word[0][0]])
+        distr, state= session.run([model.distribution, model._first_state],
                                         {model.input_data: input_word,
                                          model.targets: [[0]*29],
                                          model.initial_state: state})
+                                         
+        most_probable_word = np.argmax(np.array(distr))
         
-        distr = distr[0][4:]
-        print(distr)
-        ind = np.argmax(np.array(distr))
-        print(id_to_words[ind])
+        if i >= len(incomplete_sentence):
+            next_words.append(most_probable_word)
+            
+        if most_probable_word == words_to_id["<eos>"]:
+            break
         
-        input_word[0][0] = ind
+        input_word[0][0] = most_probable_word
+        
+    return incomplete_sentence
         
 def main():
     # Reads the data and separates it into training data, validation data and testing data

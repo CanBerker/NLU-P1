@@ -12,6 +12,16 @@ import numpy as np
 import tensorflow as tf
 
 
+def load_incomplete_set(incompl_dir):
+    
+    file = os.path.join(incompl_dir, "sentences.continuation")
+    with open(file) as f:
+        sentences = f.readlines()
+        
+    sentences = [x.split(" ") for x in sentences]
+    
+    return sentences
+    
 def load_embedding(embedding_dir):
     print("Starting to load embeddings...")
     
