@@ -101,9 +101,13 @@ class LangModel(object):
         embedded_inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         with tf.variable_scope("softmax", reuse=tf.AUTO_REUSE):
-            softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size]) #[512x20000]
-            softmax_b = tf.get_variable("softmax_b", [vocab_size]) #[1x20000]
-        
+            softmax_b = tf.get_variable("softmax_b", [vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[1x20000]
+            if exp_c:
+                softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer())
+                softmax_wp = tf.get_variable("softmax_wp", [lstm_hidden_size, hidden_size], initializer=tf.contrib.layers.xavier_initializer())
+            else:
+                softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512x20000]
+
         ###############################
         # Instanciating our RNN model #
         ###############################
@@ -126,10 +130,11 @@ class LangModel(object):
             
             if exp_c:
                 # downscaling
-                new_h =  tf.reshape(new_h, [-1, hidden_size])
+                new_h =  tf.matmul(new_h, softmax_wp)
             print("new_h",new_h.get_shape())
             logits_for_t = tf.matmul(new_h, softmax_w) + softmax_b #64*100 ==> 64*20 000
             print("logits_for_t", logits_for_t.get_shape())
+
             loss_for_t = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=l_column, logits = logits_for_t)# computes cross-entopy
             losses.append(loss_for_t)
             logits.append(logits_for_t)
@@ -154,10 +159,10 @@ class LangModel(object):
         #########################################################################
         #output = tf.reshape(hidden_state_f, [-1, hidden_size])
         with tf.variable_scope("output", reuse = tf.AUTO_REUSE):
-            output = tf.reshape(tf.concat(outputs, 1), [-1, lstm_hidden_size])
-            if exp_c:
-                # downscaling
-                output = tf.reshape(output, [-1, hidden_size])
+            output = tf.reshape(tf.concat(outputs, 1), [-1, hidden_size])
+#            if exp_c:
+#                # downscaling
+#                output = tf.matmul(output, softmax_wp)
             logits = tf.matmul(output, softmax_w) + softmax_b
         
         
