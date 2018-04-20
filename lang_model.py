@@ -21,6 +21,7 @@ parser.add_argument('--batch-size',    action='store', type=int, default=64, hel
 parser.add_argument('--vocab-size',    action='store', type=int, default=20000, help='size of our vocabulary')
 parser.add_argument('--ckpt-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ckpt'), help='directory for checkpointing model')
 parser.add_argument('--data-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our dataset')
+parser.add_argument('--out-dir',      action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'output'), help='output directory')
 parser.add_argument('--embedding-dir', action='store', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data'), help='directory of our predefined embeddings')
 parser.add_argument('--is-training',   action='store_true', default=True, help='flag to separate training from testing')
 parser.add_argument('--use_gpu',       action='store_true', default=False, help='use GPU instead of CPU')
@@ -47,6 +48,7 @@ do_validation = args.do_validation
 action        = args.action
 base_lr       = args.base_lr
 exp_c         = args.exp_c
+out_dir       = args.out_dir
 processor     = '/device:GPU:0' if args.use_gpu else '/cpu:0'
 
 class LangModel(object):
@@ -102,11 +104,9 @@ class LangModel(object):
 
         with tf.variable_scope("softmax", reuse=tf.AUTO_REUSE):
             softmax_b = tf.get_variable("softmax_b", [vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[1x20000]
+            softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512 * 20 000]
             if exp_c:
-                softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512 * 20 000]
                 softmax_wp = tf.get_variable("softmax_wp", [lstm_hidden_size, hidden_size], initializer=tf.contrib.layers.xavier_initializer()) #[1024 * 512]
-            else:
-                softmax_w = tf.get_variable("softmax_w", [hidden_size, vocab_size], initializer=tf.contrib.layers.xavier_initializer()) #[512x20000]
 
         ###############################
         # Instanciating our RNN model #
@@ -355,11 +355,9 @@ def run_training_epoch(session, model, data, op, is_train=False, id_to_word = No
                     act_s += " " + id_to_word[y_batch[y][x]]
                 except:
                     pass
-            print("predicted: ", pre_s)
-            print("Actual:", act_s)
+            #print("predicted: ", pre_s)
+            #print("Actual:", act_s)
         
-        
-        print(bs)
         
         #Add number of steps to iteration counter
         iters += model.num_steps
@@ -469,10 +467,6 @@ def train_model(raw_data):
             # Run training epoch with the data.
             train_perplexity = run_training_epoch(session, lstm_model, train_data, lstm_model.train_op, True, id_to_word)
             print("Epoch %d : Train : %.3f" % (i + 1, train_perplexity))
-
-            #if epoch % 10 == 0:
-            #    evaluate_model(lstm_model, session, val_data)
-            
             
         print("Checkpointing")
         saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=hidden_size)
@@ -480,71 +474,13 @@ def train_model(raw_data):
         #losses_list = evaluate_model(lstm_model, session, test_data)
         #write_values_to_file(losses_list, "validation_output", "validation_results")
         complete_sentences(lstm_model,session, id_to_word)
-        
-"""     
-def do_training():
-    #Initializes the Execution Graph and the Session
-    with tf.Graph().as_default(), tf.Session() as session:
-        initializer = tf.random_uniform_initializer(-init_scale,init_scale)
-        embedding_matrix = get_embedding()
-
-        # Instantiates the model for training
-        with tf.name_scope("Train"):
-            with tf.variable_scope("model", reuse=None, initializer=initializer):
-                m = LangModel(is_training=True, predef_emb=embedding_matrix)
-        with tf.name_scope("Test"):
-            with tf.variable_scope("model", reuse=True, initializer=initializer):
-                mtest = LangModel(is_training=False, predef_emb=embedding_matrix)
-    
-        #Initialize all variables
-        tf.global_variables_initializer().run()
-        saver = tf.train.Saver()
-    
-        for i in range(max_max_epoch):
-            m.assign_lr(session, learning_rate)
-            print("Epoch %d : Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-            
-            # Run the loop for this epoch in the training model
-            train_perplexity = run_epoch(session, m, train_data, m.train_op)
-            print("Epoch %d : Train Perplexity: %.3f" % (i + 1, train_perplexity))
-        
-        print("Checkpointing")
-        saver.save(session, "{0}/lang_model".format(ckpt_dir, i), global_step=max_max_epoch)
-        
-        # Run the loop in the testing model to see how effective was our training
-        test_perplexity = run_epoch(session, mtest, test_data, tf.no_op())
-        print("Test Perplexity: %.3f" % test_perplexity)
-
-# Reads the data and separates it into training data, validation data and testing data
-raw_data = reader.read_raw_data(vocab_size, data_dir)
-train_data, val_data, test_data, word_to_id, id_to_word, voc_size = raw_data
-
-     
-if do_validation:
-    ckpt_file = "{0}/lang_model-{1}.meta".format(ckpt_dir, max_max_epoch)
-    files = [f for f in os.listdir(ckpt_dir)]
-    if (len(files) > 0):
-        print("Starting validation")
-        start_time = time.time()
-        perp_list = evaluate_model(test_data, ckpt_file, ckpt_dir)
-        end_time = time.time()
-        #print(perp_list)
-        print("Validation took: %.3f secs" % ((end_time-start_time)/1000))
-else:
-    print("------------------Starting training------------------")
-    start_time = time.time()
-    do_training()
-    end_time = time.time()
-    print("Training took: %.3f secs" % ((end_time-start_time)/1000))
-    print("------------------Ending training------------------")
-"""
 
 def word_map(word, word_to_id):
     id = word_to_id["<unk>"]
     try:
         id = word_to_id[word]
     except:
-        print("word could not be mapped:", word)
+        #print("word could not be mapped:", word)
         pass
     return id
         
@@ -568,7 +504,6 @@ def complete(model, session, incomplete_sentence, words_to_id, id_to_words):
         if i < len(incomplete_sentence):
             input_word[0][0] = incomplete_sentence[i]
     
-        print("word to consider:", id_to_words[input_word[0][0]])
         distr, state= session.run([model.distribution, model._first_state],
                                         {model.input_data: input_word,
                                          model.targets: [[0]*29],
@@ -585,6 +520,27 @@ def complete(model, session, incomplete_sentence, words_to_id, id_to_words):
         input_word[0][0] = most_probable_word
         
     return incomplete_sentence
+
+def do_sentence_completion():
+    with tf.Session() as session:
+        #get m
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.variable_scope("model", reuse=None, initializer=initializer):
+            model = LangModel(is_training=False)
+        saver = tf.train.Saver(save_relative_paths=True)
+        #saver.restore(session, tf.train.latest_checkpoint(ckpt_file))
+        saver = tf.train.import_meta_graph("./ckpt2/lang_model-512_2.meta")
+        print("Restoring from {0}".format(ckpt_dir))
+        saver.restore(session, tf.train.latest_checkpoint("./ckpt2"))
+        
+        #ini_state = graph.get_tensor_by_name("Train/model/initial_state:0")
+    
+        #Initialize all variables
+        #tf.global_variables_initializer().run()
+    
+        #train_perplexity = evaluate_model( model, session, test_data)
+        complete_sentences(lstm_model,session, id_to_word)
+        return [] 
         
 def main():
     # Reads the data and separates it into training data, validation data and testing data
@@ -593,13 +549,11 @@ def main():
     
     print("Actual size of vocabulary: ", voc_size)
     
+    start_time = time.time()
     if   action == TRAIN:
         print("\n---------------Training start---------------")
-        start_time = time.time()
         train_model(raw_data)
         #make_sentences(model, id_to_words)
-        end_time = time.time()
-        print("Total time training: {0}".format(end_time - start_time))
         print("----------------Training end----------------\n")
     elif action == EVALUATE:
         print("\n---------------Evaluating start---------------")
@@ -607,11 +561,14 @@ def main():
         print("----------------Evaluating end----------------\n")       
     elif action == BOTH:
         print("\n---------------Train/eval start---------------")
-        start_time = time.time()
         train_model(raw_data)
-        end_time = time.time()
-        print("Total time training: {0}".format(end_time - start_time))
         print("----------------Train/eval end----------------\n")
+    elif action == GEN_SENTENCES:
+        print("\n---------------Generate sentences begin---------------")
+        do_sentence_completion()
+        print("\n---------------Generate sentences end  ---------------")
+    end_time = time.time()
+    print("Total time: {0}".format(end_time - start_time))
     
 if __name__ == "__main__":
     main()
